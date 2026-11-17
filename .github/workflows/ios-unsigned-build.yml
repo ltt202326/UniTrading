@@ -22,6 +22,15 @@ jobs:
           cat build-input/source.part* > "$RUNNER_TEMP/source.zip"
           unzip -q "$RUNNER_TEMP/source.zip" -d "$RUNNER_TEMP/source"
           chmod +x "$RUNNER_TEMP/source/UniTrading-1.6.0-Market-VWAP/gradlew"
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          import os
+          path = Path(os.environ["RUNNER_TEMP"]) / "source/UniTrading-1.6.0-Market-VWAP/iosApp/iosApp/ApplePlatform.swift"
+          text = path.read_text()
+          old = "func clear() -> NativeStorageResult { keychain.clear() }"
+          assert text.count(old) == 2, "Unexpected native storage interface"
+          path.write_text(text.replace(old, "func clear_() -> NativeStorageResult { keychain.clear() }"))
+          PYCODE
       - name: Compile for iPhone and iPad without signing
         working-directory: ${{ runner.temp }}/source/UniTrading-1.6.0-Market-VWAP
         run: |
