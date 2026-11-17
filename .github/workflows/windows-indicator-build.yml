@@ -31,8 +31,9 @@ jobs:
           if (-not (Test-Path "$app/UniTrading.exe")) { throw 'Windows app missing' }
           $hostPath = "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe"
           if (-not (Test-Path $hostPath)) { throw 'Tradovate login host missing' }
-          & $hostPath --self-test
-          if ($LASTEXITCODE -ne 0) { throw 'Login host self-test failed' }
+          $selfTest = & $hostPath --self-test | Out-String
+          Write-Output $selfTest
+          if ($selfTest -notmatch 'SELF_TEST PASS 60') { throw 'Login host self-test failed' }
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path $app -DestinationPath "dist/UniTrading-1.6.0-Indicator-Styles-Windows-x64-Test.zip"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
