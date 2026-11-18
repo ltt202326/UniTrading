@@ -47,6 +47,14 @@ class TradovateBroker(
     override val market: StateFlow<MarketSnapshot> = mutableMarket.asStateFlow()
     private val tradeEvents = MutableSharedFlow<TradeFill>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     override val tradeFills = tradeEvents.asSharedFlow()
+    private val mutableOrderFlow = MutableStateFlow(OrderFlowSnapshot())
+    override val orderFlow: StateFlow<OrderFlowSnapshot> = mutableOrderFlow.asStateFlow()
+    private val domSyncLock = Mutex()
+    private var requestedDom: String? = null
+    private var domRevision = 0L
+    private var activeDom: String? = null
+    private var subscribedDom: String? = null
+    private var domTimeMs: Long? = null
     private val tradeFillTracker = TradeFillTracker()
     private var accountFlows = emptyMap<String, MutableStateFlow<AccountSnapshot>>()
     private var incompleteAccounts = emptySet<String>()
@@ -216,6 +224,11 @@ class TradovateBroker(
             while (isActive && !stopped) {
                 delay(1_000)
                 lock.withLock {
+                    if (domTimeMs?.let { now() - it !in -5_000..15_000 } == true) {
+                        domTimeMs = null
+                        mutableOrderFlow.value = OrderFlowSnapshot(symbol = activeDom, connected = marketReady,
+                            statusMessage = "盘口数据已过期，等待更新")
+                    }
                     val sampleTime = latencySampleAtMs
                     if (sampleTime != null && now() - sampleTime !in 0..LATENCY_VALID_MS) {
                         latencyMs = null
@@ -396,14 +409,20 @@ class TradovateBroker(
     private suspend fun connectMarket() {
         // Web sessions use their account token on the selected market-data gateway too.
         val token = credentials.accessToken
-        lock.withLock { quoteSides.clear(); quotes = emptyMap() }
+        lock.withLock {
+            quoteSides.clear(); quotes = emptyMap(); activeDom = null; subscribedDom = null; domTimeMs = null
+            mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情重连，等待深度订阅")
+        }
         try {
             val socket = TradovateSocket(wire.socket(credentials.hosts.marketUrl), scope, ::marketEvent) {
-                marketReady = false; problem = "行情已断开，交易已暂停"; publish(); scheduleReconnect()
+                marketReady = false; problem = "行情已断开，交易已暂停"; publish()
+                mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情已断开，深度已清空")
+                scheduleReconnect()
             }
             marketSocket = socket
             socket.authorize(token)
             lock.withLock { marketReady = true; problem = "已连接 · 服务器行情 · 净额持仓"; publish() }
+            if (requestedDom != null) scope.launch { syncDom() }
         } catch (_: TimeoutCancellationException) { lock.withLock { marketReady = false; problem = "账户已连接；行情授权超时，账户登录状态仍保留"; publish() } }
         catch (cancel: CancellationException) { throw cancel }
         catch (e: Exception) { lock.withLock { marketReady = false; problem = "账户已连接；行情授权/连接失败：${safeMessage(e.message ?: "请检查行情订阅")}"; publish() } }
@@ -441,6 +460,7 @@ class TradovateBroker(
     override fun disconnect() {
         stopped = true
         connected = false; marketReady = false; problem = "已断开"
+        mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情已断开，深度已清空")
         publish()
         latencyJob?.cancel(); maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch {
@@ -1311,6 +1331,52 @@ class TradovateBroker(
         }
     }
 
+    override fun watchOrderFlow(symbol: String?) {
+        if (stopped) return
+        if (requestedDom != symbol) { requestedDom = symbol; domRevision++ }
+        scope.launch { syncDom() }
+    }
+
+    /** DOM is read-only and independently subscribed. A denied depth request must not suspend trading. */
+    private suspend fun syncDom() = domSyncLock.withLock {
+        val request = requestedDom
+        val revision = domRevision
+        val socket = marketSocket
+        val target = lock.withLock {
+            if (!marketReady || socket == null) null
+            else request?.let { name -> instruments.firstOrNull { it.symbol == name }?.executionSymbol }
+                ?.takeIf { symbol -> contractSpecs.values.any { it.symbol == symbol } }
+        }
+        if (socket != marketSocket || request != requestedDom || revision != domRevision) return@withLock
+        if (target != null && target == subscribedDom && activeDom == target) return@withLock
+        val old = lock.withLock {
+            val previous = subscribedDom
+            activeDom = null; subscribedDom = null; domTimeMs = null
+            mutableOrderFlow.value = OrderFlowSnapshot(symbol = target, connected = marketReady && target != null,
+                statusMessage = when { request == null -> "未订阅盘口"; target == null -> "等待连接或交易合约确认"; else -> "正在订阅实时盘口" })
+            previous
+        }
+        if (old != null && socket != null) try {
+            socket.request("md/unsubscribeDOM", buildJsonObject { put("symbol", old) })
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { /* Old-symbol events are ignored after activeDom is cleared. */ }
+        if (target == null || socket == null || socket != marketSocket || revision != domRevision || !marketReady) return@withLock
+        lock.withLock { activeDom = target }
+        try {
+            val result = socket.request("md/subscribeDOM", buildJsonObject { put("symbol", target) })
+            val mode = result.str("mode")
+            require(mode == null || mode == "RealTime") { "行情模式不可用" }
+            lock.withLock { if (socket == marketSocket && activeDom == target) subscribedDom = target }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { lock.withLock {
+            if (socket == marketSocket && activeDom == target) {
+                activeDom = null; domTimeMs = null
+                mutableOrderFlow.value = OrderFlowSnapshot(symbol = target, depthStatus = DepthStatus.UNAVAILABLE,
+                    statusMessage = "无法订阅深度，请检查券商 Level 2 行情权限")
+            }
+        } }
+    }
+
     private suspend fun marketEvent(frame: JsonObject) = lock.withLock {
         val data = frame["d"] as? JsonObject ?: return@withLock
         if (frame.str("e") == "md") {
@@ -1336,6 +1402,25 @@ class TradovateBroker(
                 if (ask < bid) continue
                 quotes = quotes + (spec.symbol to Quote(bid, ask, quoteTime, next.lastTrade, next.settlement))
             }
+        }
+        if (frame.str("e") == "md") for (dom in data.array("doms")) {
+            val spec = contractSpecs[dom.long("contractId")] ?: continue
+            val requestedExecution = requestedDom?.let { name -> instruments.firstOrNull { it.symbol == name }?.executionSymbol }
+            if (!marketReady || spec.symbol != activeDom || spec.symbol != requestedExecution) continue
+            val packetTime = dom.str("timestamp")?.let(::timestamp)
+            if (packetTime != null && domTimeMs?.let { packetTime < it } == true) continue
+            val book = parseTradovateDom(dom, spec)
+            if (book == null || now() - book.timeMs !in -5_000..15_000) {
+                domTimeMs = null
+                mutableOrderFlow.value = OrderFlowSnapshot(symbol = spec.symbol, connected = true,
+                    statusMessage = "盘口数据不完整或已过期，等待新快照")
+                continue
+            }
+            if (domTimeMs?.let { book.timeMs < it } == true) continue
+            domTimeMs = book.timeMs
+            mutableOrderFlow.value = OrderFlowSnapshot(symbol = spec.symbol, bids = book.bids, asks = book.asks,
+                bestBid = book.bids.firstOrNull(), bestAsk = book.asks.firstOrNull(), depthStatus = DepthStatus.AVAILABLE,
+                connected = true, statusMessage = "实时盘口 · 只读")
         }
         if (frame.str("e") == "chart") data.array("charts").forEach(::chartEvent)
         rebuild()

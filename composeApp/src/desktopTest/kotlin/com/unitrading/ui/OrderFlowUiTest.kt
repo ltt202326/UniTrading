@@ -116,6 +116,38 @@ class OrderFlowUiTest {
     @Test fun tabletCanReachAllTools() = panelTest(768, 1024, "tablet")
     @Test fun desktopCanReachAllTools() = panelTest(1000, 800, "desktop")
 
+    @Test fun domIsOpenedFromChartLayersAndClosingItStopsTheSubscription() = runDesktopComposeUiTest(width = 412, height = 860) {
+        val spec = source.instruments.first()
+        val watched = mutableListOf<String?>()
+        val broker = plugin(MutableStateFlow(snapshot(spec))) { watched += it }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(412.dp, 860.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-layers").performClick()
+        onNodeWithText("DOM 盘口").performClick()
+        onNodeWithTag("dom-panel").assertIsDisplayed()
+        onNodeWithTag("dom-prices").assertIsDisplayed()
+        capture("dom-mobile-chart")
+        onNodeWithTag("close-dom").performClick()
+        waitUntil(5_000) { watched.lastOrNull() == null }
+        onNodeWithTag("dom-panel").assertDoesNotExist()
+    }
+
+    @Test fun domSitsBesideDesktopChart() = runDesktopComposeUiTest(width = 1440, height = 900) {
+        val spec = source.instruments.first()
+        val broker = plugin(MutableStateFlow(snapshot(spec)))
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(1440.dp, 900.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-layers").performClick()
+        onNodeWithText("DOM 盘口").performClick()
+        onNodeWithTag("dom-panel").assertIsDisplayed()
+        onNodeWithTag("dom-prices").assertIsDisplayed()
+        capture("dom-desktop-chart")
+    }
+
     @Test fun closingAnalysisAndLeavingMobileChartStopTheSubscription() = runDesktopComposeUiTest(width = 412, height = 860) {
         val spec = source.instruments.first()
         val watched = mutableListOf<String?>()

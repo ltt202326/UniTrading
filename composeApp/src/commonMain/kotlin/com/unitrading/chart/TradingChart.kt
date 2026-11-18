@@ -369,7 +369,7 @@ fun TradingChart(
             if (chrome.showHistory == null) localShowHistory = !showHistory else chrome.onShowHistory(!showHistory)
         },
         ChartToggle("数据表", showData) { showData = !showData },
-    )
+    ) + listOfNotNull(chrome.onDomToggle?.let { toggle -> ChartToggle("DOM 盘口", chrome.domVisible, toggle) })
     val indicatorToggle = onIndicators?.let { open -> ChartToggle(if (indicators.isEmpty()) "指标" else "指标 ${indicators.size}", indicators.any { it.visible }, open) }
     val pickable = instruments.ifEmpty { listOf(instrument) }
     // Phones pin one toolbar row above the chart in every mode; wider layouts float the full toolbar over the plot.
@@ -997,6 +997,8 @@ class ChartChrome(
     val allIndicators: List<IndicatorConfig>? = null,
     val onOpenOrderAt: ((Long) -> Unit)? = null,
     val keyboardTrading: Boolean = false,
+    val domVisible: Boolean = false,
+    val onDomToggle: (() -> Unit)? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

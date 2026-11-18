@@ -242,8 +242,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var showSettings by remember { mutableStateOf(false) }
         var showActivity by remember(accountKey) { mutableStateOf(false) }
         var showOrder by remember { mutableStateOf(false) }
-        val orderFlowSupported = plugin.orderFlow != null
+        val domSupported = plugin.orderFlow != null
+        val orderFlowSupported = domSupported && plugin.descriptor.environment !in setOf(BrokerEnvironment.REMOTE_DEMO, BrokerEnvironment.LIVE)
         var showOrderFlow by remember(plugin) { mutableStateOf(false) }
+        var showDom by remember(plugin) { mutableStateOf(false) }
         var orderPanelState by orderSession.panelState
         // The docked order bar's "更多设置" fold. It opens at once and is saved, so the next order and the next start find it as it was left.
         // When the latest change cannot be saved the fold goes back to the saved one, as the preferences themselves do.
@@ -370,7 +372,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         // Every chart window stays live; the broker serves the one being worked on first.
         val parkedSeries = parkedCharts.values.map { it.symbol to it.timeframe }
         LaunchedEffect(plugin, symbol, executionSymbol, timeframe, parkedSeries) { plugin.watchAll((listOf(symbol to timeframe) + parkedSeries).distinct()) }
-        LaunchedEffect(plugin, symbol, executionSymbol, showOrderFlow) { plugin.watchOrderFlow(symbol.takeIf { showOrderFlow }) }
+        LaunchedEffect(plugin, symbol, executionSymbol, showOrderFlow, showDom, mobileTab) {
+            plugin.watchOrderFlow(symbol.takeIf { showOrderFlow || showDom })
+        }
         DisposableEffect(plugin) { onDispose { plugin.watchOrderFlow(null) } }
         LaunchedEffect(symbol, executionSymbol) {
             if (previousExecutionSymbol != executionSymbol) {
@@ -635,7 +639,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (localDemo) Spacer(Modifier.width(12.dp)) else ConnectionStatusControl(market, compact = true, busy, syncAction)
                 }
                 val selectTab: (Int) -> Unit = { tab ->
-                    if (mobileTab != tab) showActivity = false
+                    if (mobileTab != tab) { showActivity = false; showDom = false }
                     showOrderFlow = false
                     mobileTab = tab
                 }
@@ -787,6 +791,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && showOrderFlow, onBackCompleted = { showOrderFlow = false })
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = compact && showDom, onBackCompleted = { showDom = false })
                 // The popup put away with its draft on the chart: back drops the draft, as back on a minimized sheet or dock does.
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = chartFirst && useOrderPopup && orderPanelState == MobileOrderPanelState.MINIMIZED && !keyboardOpen,
@@ -914,6 +920,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 showDraft = true
                                 openOrderEditor()
                             } },
+                            domVisible = active && showDom,
+                            onDomToggle = if (active && domSupported) ({ showDom = !showDom }) else null,
                             locked = chartPreferences.chartLocked && !chartCompact,
                             onLocked = if (chartCompact) null else { locked: Boolean -> scope.launch { runtime.chartPreferences.setChartLocked(locked) }; Unit }, toolbarEnd = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -923,6 +931,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                                 }
                             }))
+                    if (active && showDom && !chartCompact) {
+                        DomPanel(plugin, shownInstrument, account.orders.filter { it.request.symbol == shownExecution },
+                            Modifier.width(300.dp).fillMaxHeight()) { showDom = false }
+                    }
+                    }
+                    if (active && showDom && chartCompact) {
+                        DomPanel(plugin, shownInstrument, account.orders.filter { it.request.symbol == shownExecution },
+                            Modifier.align(Alignment.CenterEnd).padding(top = 48.dp, bottom = 8.dp, end = 4.dp)
+                                .fillMaxHeight(.83f).fillMaxWidth(.74f).widthIn(max = 320.dp)) { showDom = false }
                     }
                     }
                     }
