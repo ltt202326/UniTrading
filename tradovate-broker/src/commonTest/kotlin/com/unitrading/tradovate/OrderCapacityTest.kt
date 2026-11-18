@@ -121,6 +121,20 @@ class OrderCapacityTest {
         assertEquals(0, discoverOrderCapacity { result("TradingLocked") }.maximumLotsHundredths)
     }
 
+    @Test fun zeroCapacityShowsTheActualBrokerRejectionWithoutChangingTheLimit() = runTest {
+        for (reason in listOf("MaxPosLimitReached", "MaxOrderQtyLimitReached", "MaxTotalPosLimitReached", "NotEnoughLiquidity", "TradingLocked")) {
+            val value = discoverOrderCapacity { result(reason) }
+            assertEquals(0, value.maximumLotsHundredths)
+            assertTrue(value.message.orEmpty().contains(reason), "The diagnostic should identify $reason")
+        }
+        val unknown = discoverOrderCapacity { result("ContractNotAuthorized") }
+        assertNull(unknown.maximumLotsHundredths)
+        assertTrue(unknown.message.orEmpty().contains("ContractNotAuthorized"))
+        val rejected = discoverOrderCapacity { buildJsonObject { put("errorText", "Product unavailable for account") } }
+        assertNull(rejected.maximumLotsHundredths)
+        assertTrue(rejected.message.orEmpty().contains("Product unavailable"))
+    }
+
     @Test fun changingCapacityDuringSearchDiscardsTheBoundary() = runTest {
         var calls = 0
         assertNull(discoverOrderCapacity { quantity ->

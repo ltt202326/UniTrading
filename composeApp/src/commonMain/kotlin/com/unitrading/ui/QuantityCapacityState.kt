@@ -55,11 +55,16 @@ internal fun rememberQuantityCapacity(cache: OrderCapacityCache, brokerId: Strin
                 catch (cancel: CancellationException) { throw cancel }
                 catch (_: Exception) { OrderCapacity(message = "可下单数量暂时无法确认，请刷新") }
             val maximum = result.maximumLotsHundredths
-            if (maximum != null) cache.put(cacheKey, CachedCapacity(maximum, result.message)) else unavailable = result.message ?: "可下单数量未知"
+            if (maximum != null) {
+                unavailable = null
+                cache.put(cacheKey, CachedCapacity(maximum, result.message))
+            } else unavailable = result.message ?: "可下单数量未知"
             refreshing = false
         }
     }
     val state = when {
+        cached != null && unavailable != null -> QuantityCapacityState(cached.maximum,
+            "当前显示上次缓存的上限；本次校验失败：$unavailable", loading = refreshing)
         cached != null -> QuantityCapacityState(cached.maximum, cached.message, loading = refreshing)
         unavailable != null -> QuantityCapacityState(message = unavailable)
         else -> QuantityCapacityState(message = "正在确认可下单数量", loading = true)

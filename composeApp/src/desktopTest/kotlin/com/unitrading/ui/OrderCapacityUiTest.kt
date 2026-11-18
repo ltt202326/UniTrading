@@ -68,13 +68,32 @@ class OrderCapacityUiTest {
         awaitChecks(2)
         compose.waitUntil(5_000) { !state.loading }
         assertEquals(500, state.maximum, "A failed check is not an answer")
-        assertNull(state.message)
+        assertTrue(state.message.orEmpty().contains("上次缓存的上限"))
+        assertTrue(state.message.orEmpty().contains("账户状态已变化"))
         assertEquals(listOf(null, 500L), session.lastKnown)
         session.answer = OrderCapacity(300)
         compose.runOnIdle { refresh!!() }
         awaitChecks(3)
         compose.waitUntil(5_000) { state.maximum == 300L }
         assertEquals(CachedCapacity(300), OrderCapacityCache(store).entries.value.values.single(), "The next launch starts from it")
+    }
+
+    @Test fun aCachedZeroIsIdentifiedWhenRefreshCannotConfirmIt() {
+        session.answer = OrderCapacity(0, "券商试算拒绝 1 张（MaxPosLimitReached）")
+        render()
+        awaitChecks(1)
+        compose.waitUntil(5_000) { state.maximum == 0L }
+        session.answer = OrderCapacity(message = "报价不可用")
+        compose.runOnIdle { refresh!!() }
+        awaitChecks(2)
+        compose.waitUntil(5_000) { !state.loading && state.message.orEmpty().contains("上次缓存") }
+        assertEquals(0L, state.maximum, "Failed verification must not silently bypass the earlier limit")
+        assertTrue(state.message.orEmpty().contains("报价不可用"))
+        session.answer = OrderCapacity(100)
+        compose.runOnIdle { refresh!!() }
+        awaitChecks(3)
+        compose.waitUntil(5_000) { state.maximum == 100L }
+        assertNull(state.message)
     }
 
     @Test fun thePlusButtonWorksUntilTheServerGivesALimit() {
