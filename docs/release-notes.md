@@ -2,7 +2,7 @@
 
 ## 简体中文
 
-- 券商上限为零时显示试算的账户、合约、方向及券商说明；缓存正在刷新时标明状态。
+- 修复 @MCL 连续图表 K 线与当前下单合约价格不一致：确认主力后使用该月份合约的真实 K 线，未确认主力时暂停显示；图表仅包含当前主力的历史，不自动拼接旧月份。
 - 显示券商数量试算的拒绝原因，并在试算失败时标明显示的是上次缓存的上限；不绕过下单风控。
 - 绘图工具默认样式在各子图间共享，绘图对象仍各自独立；价格轴刻度随可用高度增加并避免重复标签。
 - 多图共用顶部和左侧绘图工具栏，操作当前子图；缩小可拖动的分隔线，Windows 的 DOM 移到独立侧栏并跟随当前品种。
@@ -22,7 +22,7 @@
 
 ## English
 
-- Show the checked account, contract, side and broker comment for zero-capacity results, and identify cached limits while refreshing.
+- Align @MCL chart bars with the verified execution contract, hiding them while the leader is unconfirmed. History is the current contract's history and does not splice previous months.
 - Show broker capacity rejection reasons and identify cached limits when a refresh fails, without bypassing order risk checks.
 - Share drawing-tool defaults across chart panes while retaining separate drawings, and adapt price-axis label density to the available height.
 - Share chart and drawing toolbars across split charts, scope controls to the selected pane, reduce divider spacing, and dock the Windows DOM in a resizable side panel following the selected instrument.
