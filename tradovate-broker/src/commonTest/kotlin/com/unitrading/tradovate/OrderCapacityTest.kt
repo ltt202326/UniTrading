@@ -135,6 +135,32 @@ class OrderCapacityTest {
         assertNull(discoverOrderCapacity { result(if (++calls == 1) "Success" else "TradingLocked") }.maximumLotsHundredths)
     }
 
+    /** Synthetic broker fixture: verifies routing only, not real NNQ/NMQ entitlements or exchange acceptance. */
+    @Test fun nanoSymbolsUseTheSelectedAccountForRiskChecksAndOrderSubmission() = runTest {
+        for (symbol in listOf("NNQZ6", "NMQZ6")) for (accountId in listOf("100", "101")) {
+            val wire = MockTradovateWire()
+            val contract = wire.snapshot.array("contracts").single()
+            wire.snapshot = JsonObject(wire.snapshot + ("contracts" to JsonArray(listOf(JsonObject(contract + ("name" to JsonPrimitive(symbol)))))))
+            wire.capacityCheck = { body ->
+                assertEquals(accountId.toLong(), body.long("accountId"))
+                assertEquals(200, body.array("orders").single().long("contractId"))
+                result(if (body.array("orders").single().long("orderQty")!! <= 2) "Success" else "MaxPosLimitReached")
+            }
+            val broker = TradovateBroker(TradovateSession(TradovateEnvironment.DEMO, "test-access-token-1234567890", null, 42, "test", 4102444800000),
+                wire, backgroundScope, { 1_798_589_000_000L })
+            broker.connect()
+            broker.watch(symbol, Timeframe.M5)
+            runCurrent()
+            val session = broker.openSession(accountId)
+            val order = OrderRequest(symbol, Side.BUY, OrderKind.MARKET, 100)
+            assertEquals(200, session.orderCapacity(order).maximumLotsHundredths)
+            assertTrue(session.placeOrder("nano-$accountId", order).accepted)
+            val sent = wire.requests.last { it.path == "order/placeorder" }.body!!
+            assertEquals(accountId.toLong(), sent.long("accountId"))
+            assertEquals(symbol, sent.str("symbol"))
+        }
+    }
+
     @Test fun dryRunUsesTheSelectedAccountContractSideAndPriceWithoutCreatingProtectionOrders() {
         val request = OrderRequest("MESZ6", Side.SELL, OrderKind.STOP, 100, 5500000000, 5501000000, 5499000000)
         val body = capacityBody(101, 200, request, 5)

@@ -696,12 +696,16 @@ fun TradingChart(
                     val labelHeight = textMeasurer.measure("0", labelStyle).size.height.toFloat()
                     val labelPadding = 3.dp.toPx()
                     val priceTags = mutableListOf<PriceTag>()
-                    for (i in 0..5) {
-                        val y = top + (plotBottom - top) * i / 5
+                    val priceIntervals = priceAxisIntervals(plotBottom - top, density.density, labelHeight)
+                    val drawnPriceLabels = mutableSetOf<String>()
+                    for (i in 0..priceIntervals) {
+                        val y = top + (plotBottom - top) * i / priceIntervals
                         drawLine(colors.Grid, Offset(left, y), Offset(right, y), 1f)
                         val label = axisPrice(scale.price(y, instrument.tickSize))
-                        val labelX = if (axis.left) (left - textMeasurer.measure(label, labelStyle).size.width - 8f).coerceAtLeast(0f) else right + 8f
-                        text(label, labelX, y - labelHeight / 2)
+                        if (drawnPriceLabels.add(label)) {
+                            val labelX = if (axis.left) (left - textMeasurer.measure(label, labelStyle).size.width - 8f).coerceAtLeast(0f) else right + 8f
+                            text(label, labelX, y - labelHeight / 2)
+                        }
                     }
                     for (i in 0..4) {
                         if (visible.isEmpty()) break

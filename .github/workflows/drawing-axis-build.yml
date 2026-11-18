@@ -1,0 +1,91 @@
+name: Drawing defaults and price scale test builds
+on:
+  push:
+    branches: ['build/drawing-axis-nano-20261119']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Build Android debug APK
+        run: ./gradlew :androidApp:assembleStandardDebug --no-daemon
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UniTrading-DrawingAxis-Android-Debug
+          path: androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
+          if-no-files-found: error
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Package Windows app
+        run: ./gradlew.bat :composeApp:createDistributable --no-daemon
+      - name: Verify and archive Windows app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = 'composeApp/build/compose/binaries/main/app/UniTrading'
+          if (-not (Test-Path "$app/UniTrading.exe")) { throw 'Windows executable missing' }
+          if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host missing' }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-DrawingAxis-Windows-x64.zip'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UniTrading-DrawingAxis-Windows-x64
+          path: dist/UniTrading-DrawingAxis-Windows-x64.zip
+          compression-level: 0
+          if-no-files-found: error
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - name: Test continuous charts and recovery
+        run: ./gradlew :tradovate-broker:desktopTest --tests '*OrderCapacityTest*' --tests '*ContinuousContractsTest*' --tests '*CandleCacheTest*' --tests '*IncrementalChartTest*' --tests '*MarketWatchConcurrencyTest*' --no-daemon
+      - name: Test multi-chart selection, resizing and undo
+        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*ChartWindowsUiTest.splitChartsUseTheSelectedChartForOrdersAndKeepTheirOwnSymbols*' --tests '*OrderFlowUiTest.domSitsBesideDesktopChart*' --tests '*OrderFlowUiTest.desktopDomFollowsSelectedChartAndRejectsOldContractData*' --tests '*ChartGeometryTest*' --tests '*DesktopPanelGeometryTest*' --tests '*OrderFlowUiTest.tabletCanOpenFourChartLayout*' --tests '*ChartContextMenuUiTest.menuRemoves*' --tests '*IndicatorSettingsTest*' --tests '*ChartDrawingsTest*' --no-daemon
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: UniTrading-DrawingAxis-Test-Results
+          path: |
+            artifacts/multichart/*.png
+            artifacts/orderflow/*.png
+            composeApp/build/test-results/desktopTest/*.xml
+            tradovate-broker/build/test-results/desktopTest/*.xml
+          if-no-files-found: warn
