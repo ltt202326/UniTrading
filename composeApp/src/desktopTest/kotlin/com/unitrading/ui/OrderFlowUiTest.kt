@@ -124,7 +124,7 @@ class OrderFlowUiTest {
         setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
             Box(Modifier.requiredSize(412.dp, 860.dp)) { TradingScreen(runtime) }
         } }
-        onNodeWithTag("chart-layers").performClick()
+        onNodeWithTag("chart-layers").performScrollTo().performClick()
         onNodeWithText("DOM 盘口").performClick()
         onNodeWithTag("dom-panel").assertIsDisplayed()
         onNodeWithTag("dom-prices").assertIsDisplayed()
