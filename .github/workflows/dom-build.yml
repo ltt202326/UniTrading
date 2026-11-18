@@ -79,7 +79,10 @@ jobs:
       - name: Run DOM screenshot tests with synthetic data
         run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*OrderFlowUiTest.domSitsBesideDesktopChart*' --tests '*OrderFlowUiTest.domIsOpenedFromChartLayersAndClosingItStopsTheSubscription*' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: UniTrading-DOM-desktop-screenshots
-          path: artifacts/orderflow/dom-*-chart.png
-          if-no-files-found: error
+          path: |
+            artifacts/orderflow/dom-*-chart.png
+            composeApp/build/test-results/desktopTest/*.xml
+          if-no-files-found: warn
