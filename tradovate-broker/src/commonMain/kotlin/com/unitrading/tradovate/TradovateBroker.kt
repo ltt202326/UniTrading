@@ -110,6 +110,10 @@ class TradovateBroker(
         val liveOnly: Boolean, val historyOnly: Boolean, var ended: Boolean = false)
     private data class ChartChannel(val wireId: JsonPrimitive, val page: ChartPage, val historical: Boolean, val shared: Boolean)
     private val charts = mutableMapOf<String, ChartChannel>()
+    // Arrival times, not candle timestamps: the latter stay fixed throughout the bar.
+    private val continuousChartProgress = mutableMapOf<Pair<String, Timeframe>, Long>()
+    private val continuousChartLiveBar = mutableMapOf<Pair<String, Timeframe>, Long>()
+    private val continuousChartRetryAfter = mutableMapOf<Pair<String, Timeframe>, Long>()
     /** Series read whole in the background so that their charts open from the cache, most wanted first. */
     private val preloadTargets = MutableStateFlow<List<Pair<String, Timeframe>>>(emptyList())
     private val preloadWake = Channel<Unit>(Channel.CONFLATED)
@@ -447,7 +451,7 @@ class TradovateBroker(
                     cancelledChartIds.clear()
                     pendingChartCancellations.clear()
                     accountSocket?.close(); marketSocket?.close(); marketReady = false
-                    charts.clear(); preloadCharts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
+                    charts.clear(); continuousChartProgress.clear(); continuousChartLiveBar.clear(); continuousChartRetryAfter.clear(); preloadCharts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
                     volumeCharts.values.forEach { it.result.completeExceptionally(IllegalStateException("行情已重连")) }; volumeCharts.clear()
                     connect()
                     return@launch
@@ -948,9 +952,10 @@ class TradovateBroker(
         chartBackfillJobs.remove(series)?.cancel()
         scope.launch {
             chartWatchLock.withLock {
-                val socket = marketSocket ?: return@launch
                 // Asked for again while this waited: the new watch owns the series' charts.
                 if (stopped || series in watched) return@launch
+                lock.withLock { continuousChartProgress.remove(series); continuousChartLiveBar.remove(series); continuousChartRetryAfter.remove(series) }
+                val socket = marketSocket ?: return@launch
                 withContext(NonCancellable) { cancelCharts(socket, series = series) }
             }
         }
@@ -1047,6 +1052,10 @@ class TradovateBroker(
             throw error
         }
         lock.withLock {
+            if (!page.historyOnly && page.series.first in continuousRoutes) {
+                continuousChartProgress[page.series] = now()
+                continuousChartLiveBar.remove(page.series)
+            }
             if (overflow != earlyChartOverflow) page.load.accept(emptyList(), historical = true, endOfHistory = false, validPacket = false)
             for (field in listOf("historicalId", "realtimeId")) {
                 val id = response[field] as? JsonPrimitive ?: continue
@@ -1397,6 +1406,9 @@ class TradovateBroker(
                 val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time, quoteTime,
                     incomingTrade ?: previous?.lastTrade, incomingSettlement ?: previous?.settlement)
                 quoteSides[spec.symbol] = next
+                // A fresh trade on the verified execution contract is evidence of market activity, not a replacement
+                // for a continuous candle. Recover only a stalled subscription; never synthesize bars from quotes.
+                if (incomingTrade != null && now() - time in -5_000..5_000) recoverStalledContinuousCharts(spec.symbol, time)
                 val bid = next.bid ?: continue
                 val ask = next.ask ?: continue
                 if (ask < bid) continue
@@ -1457,6 +1469,10 @@ class TradovateBroker(
         val endOfHistory = !page.liveOnly && !page.ended && chart.bool("eoh") == true
         val historical = page.historyOnly || endOfHistory ||
             if (channel.shared) chart.str("s") == "db" || (chart.str("s") !in listOf("", "s") && !page.ended) else channel.historical
+        if (!historical && chart.str("s") != "db" && incoming.isNotEmpty() && incoming.size == chart.array("bars").size && key.first in continuousRoutes) {
+            continuousChartProgress[key] = now()
+            incoming.maxOfOrNull(Candle::timeMs)?.let { newest -> continuousChartLiveBar[key] = maxOf(continuousChartLiveBar[key] ?: newest, newest) }
+        }
         page.load.accept(incoming, historical, endOfHistory, incoming.size == chart.array("bars").size, countForBackfill = !page.liveOnly)
         val bars = page.load.candles
         // A cached chart still reading the bars it lacks would draw the live bar right after its stale last one.
@@ -1473,6 +1489,27 @@ class TradovateBroker(
             page.ended = true
             if (page.load.failed) problem = "历史补取未接上缓存，已保留原缓存；可重新选择品种或周期重试"
             if (page.historyOnly || !page.liveOnly && page.load.nextPageBefore != null) continueChartHistory(page)
+        }
+    }
+
+    /** Called under [lock] when the confirmed dated contract has a fresh trade. */
+    private fun recoverStalledContinuousCharts(contract: String, tradeTime: Long) {
+        val current = now()
+        watched.forEach { series ->
+            val route = continuousRoutes[series.first] ?: return@forEach
+            if (route.spec.tradeSymbol != contract || route.checkedAt == null || current !in route.checkedAt until route.validUntil) return@forEach
+            if (charts.values.none { it.page.series == series && !it.page.historyOnly }) return@forEach
+            val last = continuousChartProgress[series] ?: return@forEach
+            // Bar timestamps name the beginning of an interval, not the receipt time. Allow two full intervals and
+            // at least 30 seconds; daily sessions use exchange calendars and are deliberately excluded from this test.
+            val behind = !series.second.isDaily && continuousChartLiveBar[series]?.let { bar ->
+                tradeTime - bar >= maxOf(30_000L, series.second.millis * 2)
+            } == true
+            if ((current - last < 30_000 && !behind) || current < (continuousChartRetryAfter[series] ?: 0L)) return@forEach
+            if (watchJobs[series]?.isActive == true || chartBackfillJobs[series]?.isActive == true) return@forEach
+            continuousChartRetryAfter[series] = current + 60_000
+            continuousChartProgress[series] = current
+            startWatch(series, forceRefresh = true)
         }
     }
 
