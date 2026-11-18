@@ -140,6 +140,11 @@ class ChartWindowsUiTest {
         compose.onNodeWithTag("interval-inline-15").performClick()
         compose.onNodeWithTag("chart-symbol").assertTextContains("OTHRZ6", substring = true)
         assertTrue(broker.watched.last().contains("OTHRZ6" to m15))
+        compose.onNodeWithTag("chart-indicators").performClick()
+        compose.onNodeWithTag("add-indicator-MA").performClick()
+        compose.onNodeWithTag("indicators-save").performClick()
+        compose.waitUntil(5_000) { runtime.indicatorsForChart("split1").settings.value.indicators.size == 1 }
+        assertTrue(runtime.indicatorsForChart(MAIN_CHART).settings.value.indicators.isEmpty())
         compose.onNodeWithTag("review-order").performClick()
         confirmOrder(1)
         assertEquals("OTHRZ6", broker.placed.last().symbol)

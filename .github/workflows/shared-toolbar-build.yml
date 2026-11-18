@@ -78,7 +78,7 @@ jobs:
       - name: Test continuous charts and recovery
         run: ./gradlew :tradovate-broker:desktopTest --tests '*ContinuousContractsTest*' --tests '*CandleCacheTest*' --tests '*IncrementalChartTest*' --tests '*MarketWatchConcurrencyTest*' --no-daemon
       - name: Test multi-chart selection, resizing and undo
-        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*ChartWindowsUiTest.splitChartsUseTheSelectedChartForOrdersAndKeepTheirOwnSymbols*' --tests '*OrderFlowUiTest.domSitsBesideDesktopChart*' --tests '*DesktopPanelGeometryTest*' --tests '*OrderFlowUiTest.tabletCanOpenFourChartLayout*' --tests '*ChartContextMenuUiTest.menuRemoves*' --tests '*IndicatorSettingsTest*' --tests '*ChartDrawingsTest*' --no-daemon
+        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*ChartWindowsUiTest.splitChartsUseTheSelectedChartForOrdersAndKeepTheirOwnSymbols*' --tests '*OrderFlowUiTest.domSitsBesideDesktopChart*' --tests '*OrderFlowUiTest.desktopDomFollowsSelectedChartAndRejectsOldContractData*' --tests '*DesktopPanelGeometryTest*' --tests '*OrderFlowUiTest.tabletCanOpenFourChartLayout*' --tests '*ChartContextMenuUiTest.menuRemoves*' --tests '*IndicatorSettingsTest*' --tests '*ChartDrawingsTest*' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
