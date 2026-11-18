@@ -20,8 +20,17 @@ internal fun chartBackfillRange(anchor: Long, closest: Long) = buildJsonObject {
     put("closestTimestamp", Instant.fromEpochMilliseconds(closest).toString())
 }
 
-internal fun mergeCandles(previous: List<Candle>, incoming: List<Candle>): List<Candle> =
-    (previous + incoming).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(CHART_BARS)
+internal fun mergeCandles(previous: List<Candle>, incoming: List<Candle>): List<Candle> {
+    // Live updates normally replace the latest bar or append one. Avoid building and sorting a map for every tick.
+    if (incoming.size == 1 && previous.isNotEmpty() && previous.size <= CHART_BARS &&
+        (1 until previous.size).all { previous[it - 1].timeMs < previous[it].timeMs }) {
+        val bar = incoming[0]
+        val last = previous.last()
+        if (bar.timeMs == last.timeMs) return previous.dropLast(1) + bar
+        if (bar.timeMs > last.timeMs) return previous.drop(if (previous.size == CHART_BARS) 1 else 0) + bar
+    }
+    return (previous + incoming).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(CHART_BARS)
+}
 
 /** How far a fresh chart reads back: four chart-widths of wall time cover weekends and holidays. */
 internal fun chartHistoryFloor(timeframe: Timeframe, now: Long): Long = maxOf(0, now - timeframe.millis * CHART_BARS * 4)
@@ -87,7 +96,10 @@ internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null) {
                 }
             }
         } else realtime = mergeCandles(realtime, incoming)
-        candles = mergeCandles(mergeCandles(candles, incoming), realtime)
+        // candles already includes the earlier real-time updates. Reapply them only when a historical
+        // packet could overwrite them; live packets need just one merge.
+        candles = if (historical) mergeCandles(mergeCandles(candles, incoming), realtime)
+            else mergeCandles(candles, incoming)
         if (!historical || !endOfHistory || !countForBackfill || failed) return
 
         if (floor == null || history.firstOrNull()?.let { it.timeMs <= floor } == true || history.size >= CHART_BARS) {

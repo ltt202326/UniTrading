@@ -107,6 +107,35 @@ class IndicatorsTest {
         assertSeries(listOf(nan, 50.0, 50.0, 50.0), flat[2])
     }
 
+    @Test fun kdjMatchesAWindowScanForChangingAndFlatPrices() {
+        val random = kotlin.random.Random(48)
+        val bars = List(1500) { i ->
+            val low = 7_700_000_000L + random.nextInt(0, 40) * 250_000L
+            val high = low + random.nextInt(0, 5) * 250_000L
+            Candle(i.toLong(), low, high, low, low + (high - low) / 2)
+        }
+        for (period in listOf(1, 2, 20, 1000, 1501)) {
+            val actual = kdj(bars, period, 3, 3)
+            var previousK = 50.0
+            var previousD = 50.0
+            for (i in bars.indices) {
+                if (i < period - 1) {
+                    assertTrue(actual.all { it[i].isNaN() })
+                    continue
+                }
+                val window = bars.subList(i - period + 1, i + 1)
+                val high = window.maxOf { it.high }.toDouble()
+                val low = window.minOf { it.low }.toDouble()
+                val rsv = if (high == low) 50.0 else (bars[i].close - low) / (high - low) * 100
+                previousK = (2 * previousK + rsv) / 3
+                previousD = (2 * previousD + previousK) / 3
+                assertEquals(previousK, actual[0][i], 1e-9)
+                assertEquals(previousD, actual[1][i], 1e-9)
+                assertEquals(3 * previousK - 2 * previousD, actual[2][i], 1e-9)
+            }
+        }
+    }
+
     @Test fun atrSeedsWithTheMeanTrueRange() {
         val candles = listOf(Candle(0, 9, 10, 8, 9), Candle(1, 10, 12, 9, 11), Candle(2, 10, 11, 7, 8))
         assertSeries(listOf(nan, 2.5, 3.25), atr(candles, 2))

@@ -306,10 +306,20 @@ fun kdj(candles: List<Candle>, period: Int, kSmooth: Int, dSmooth: Int): List<Do
     val j = DoubleArray(candles.size) { Double.NaN }
     var previousK = 50.0
     var previousD = 50.0
-    for (i in period - 1 until candles.size) {
-        var high = Double.NEGATIVE_INFINITY
-        var low = Double.POSITIVE_INFINITY
-        for (x in i - period + 1..i) { high = max(high, candles[x].high.toDouble()); low = min(low, candles[x].low.toDouble()) }
+    // Monotonic queues keep the extrema for the current window in amortized O(1) per bar.
+    val highs = ArrayDeque<Int>()
+    val lows = ArrayDeque<Int>()
+    for (i in candles.indices) {
+        val start = i - period + 1
+        while (highs.isNotEmpty() && highs.first() < start) highs.removeFirst()
+        while (lows.isNotEmpty() && lows.first() < start) lows.removeFirst()
+        while (highs.isNotEmpty() && candles[highs.last()].high.toDouble() <= candles[i].high.toDouble()) highs.removeLast()
+        while (lows.isNotEmpty() && candles[lows.last()].low.toDouble() >= candles[i].low.toDouble()) lows.removeLast()
+        highs.addLast(i)
+        lows.addLast(i)
+        if (start < 0) continue
+        val high = candles[highs.first()].high.toDouble()
+        val low = candles[lows.first()].low.toDouble()
         val rsv = if (high == low) 50.0 else (candles[i].close - low) / (high - low) * 100
         previousK = ((kSmooth - 1) * previousK + rsv) / kSmooth
         previousD = ((dSmooth - 1) * previousD + previousK) / dSmooth

@@ -160,11 +160,11 @@ fun TradingChart(
         if (fittedViewport != viewport) viewport = fittedViewport
     }
     val range = viewport.range(candles.size)
-    val visible = if (range.isEmpty()) emptyList() else candles.slice(range)
+    val visible = remember(candles, range) { if (range.isEmpty()) emptyList() else candles.slice(range) }
     // Indicators use every loaded bar; separate panes take the bottom of the drawable area, above the time axis.
     val computedIndicators = remember(candles, indicators, timeframe) { computeIndicators(indicators, candles, timeframe) }
-    val overlays = computedIndicators.filter { it.overlay }
-    val panes = computedIndicators.filterNot { it.overlay }
+    val overlays = remember(computedIndicators) { computedIndicators.filter { it.overlay } }
+    val panes = remember(computedIndicators) { computedIndicators.filterNot { it.overlay } }
     var paneFractions by remember(indicatorPaneFractions) { mutableStateOf(indicatorPaneFractions) }
     val minimumPaneHeight = with(density) { 56.dp.toPx() }
     val paneLayout = indicatorPaneLayout(top, bottom, panes.map { it.config.id }, paneFractions, minimumPaneHeight)

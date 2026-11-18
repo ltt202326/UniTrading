@@ -12,6 +12,35 @@ private const val CACHE_TIME = 1_798_589_000_000L
 private const val CACHE_STEP = 5 * 60_000L
 
 class CandleCacheTest {
+    @Test fun liveAndHistoricalPacketsMatchTheOriginalMergeOrder() {
+        fun reference(a: List<Candle>, b: List<Candle>) =
+            (a + b).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(CHART_BARS)
+        val random = kotlin.random.Random(814)
+        repeat(30) {
+            val cached = (0 until 40).map { i -> candle(i.toLong(), 100) }
+            val load = ChartLoad(cached)
+            var expected = cached
+            var realtime = emptyList<Candle>()
+            repeat(200) {
+                val incoming = List(random.nextInt(0, 4)) { candle(random.nextInt(0, 60).toLong(), random.nextLong(90, 121)) }
+                val historical = random.nextBoolean()
+                if (!historical) realtime = reference(realtime, incoming)
+                expected = reference(reference(expected, incoming), realtime)
+                load.accept(incoming, historical, endOfHistory = false, validPacket = true)
+                assertEquals(expected, load.candles)
+            }
+        }
+    }
+
+    @Test fun liveMergeHandlesLatestReplacementAppendAndUnsortedHistory() {
+        fun reference(a: List<Candle>, b: List<Candle>) =
+            (a + b).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(CHART_BARS)
+        val full = List(CHART_BARS) { candle(it.toLong()) }
+        val cases = listOf(full to listOf(candle((CHART_BARS - 1).toLong(), 109)),
+            full to listOf(candle(CHART_BARS.toLong())),
+            listOf(candle(2), candle(1), candle(2, 109)) to listOf(candle(3)))
+        cases.forEach { (previous, incoming) -> assertEquals(reference(previous, incoming), mergeCandles(previous, incoming)) }
+    }
     @Test fun liveSubscriptionSnapshotDoesNotCountAsHistoricalBackfill() {
         val seed = Candle(1, 100, 110, 90, 100)
         val load = ChartLoad(listOf(seed))

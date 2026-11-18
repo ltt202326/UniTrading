@@ -103,9 +103,16 @@ data class PriceScale(val low: Double, val high: Double, val top: Float, val bot
     }
     companion object {
         fun from(candles: List<Candle>, extras: List<Long>, top: Float, bottom: Float): PriceScale {
-            val points = candles.flatMap { listOf(it.low, it.high) } + extras.filter { it > 0 }
-            val min = (points.minOrNull() ?: 1).toDouble()
-            val max = (points.maxOrNull() ?: 2).toDouble()
+            var minimum: Long? = null
+            var maximum: Long? = null
+            fun include(value: Long) {
+                minimum = minimum?.let { minOf(it, value) } ?: value
+                maximum = maximum?.let { maxOf(it, value) } ?: value
+            }
+            candles.forEach { include(it.low); include(it.high) }
+            extras.forEach { if (it > 0) include(it) }
+            val min = (minimum ?: 1).toDouble()
+            val max = (maximum ?: 2).toDouble()
             val padding = maxOf((max - min) * 0.16, 8.0)
             return PriceScale(maxOf(0.0, min - padding), max + padding, top, bottom)
         }
