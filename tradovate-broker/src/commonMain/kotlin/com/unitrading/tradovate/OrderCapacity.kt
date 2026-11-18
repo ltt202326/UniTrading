@@ -28,6 +28,7 @@ private fun JsonObject.hasRiskEvaluation(): Boolean {
 internal suspend fun discoverOrderCapacity(lastKnown: Long? = null, check: suspend (Long) -> JsonObject): OrderCapacity {
     var acceptedAny = false
     var lastRejection: String? = null
+    var lastComment: String? = null
     val ceiling = Int.MAX_VALUE.toLong()
     suspend fun accepts(quantity: Long): Boolean {
         val response = check(quantity)
@@ -38,7 +39,10 @@ internal suspend fun discoverOrderCapacity(lastKnown: Long? = null, check: suspe
                 require(response.hasRiskEvaluation()) { "响应缺少数量校验结果" }
                 true.also { acceptedAny = true }
             }
-            in quantityRejections -> false.also { lastRejection = reason }
+            in quantityRejections -> false.also {
+                lastRejection = reason
+                lastComment = response.str("comment")?.trim()?.takeIf { it.isNotEmpty() }?.let(::safeMessage)?.take(160)
+            }
             in blockedRejections -> throw CapacityBlocked(reason!!)
             else -> throw IllegalArgumentException("可下单数量未知（${reason ?: "响应缺少校验结果"}）")
         }
@@ -47,7 +51,8 @@ internal suspend fun discoverOrderCapacity(lastKnown: Long? = null, check: suspe
         // The limit last found is usually still right: two checks prove it where a search takes about a dozen, a second each.
         val known = lastKnown?.div(100)?.takeIf { it in 1 until ceiling }
         if (known != null && accepts(known) && !accepts(known + 1)) return OrderCapacity(known * 100)
-        if (!accepts(1)) return OrderCapacity(0, "券商试算拒绝 1 张（${lastRejection ?: "未知原因"}）")
+        if (!accepts(1)) return OrderCapacity(0,
+            "券商试算拒绝 1 张（${lastRejection ?: "未知原因"}）" + (lastComment?.let { "\n券商说明：$it" } ?: ""))
         var low = 1L
         var high = 2L
         while (accepts(high)) {

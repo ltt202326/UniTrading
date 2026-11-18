@@ -1701,6 +1701,9 @@ class TradovateBroker(
                 }
                 if (!market.value.tradingReady || lock.withLock { capacityBasis(accountId.toLong()) != basis })
                     OrderCapacity(message = "账户状态已变化，请刷新数量上限")
+                else if (result.maximumLotsHundredths == 0L) result.copy(message =
+                    listOfNotNull(result.message, "试算账户 ID：$accountId · 合约：${request.symbol}（ID：$contractId）",
+                        "方向：${if (request.side == Side.BUY) "买入" else "卖出"} · 数量：1 张").joinToString("\n"))
                 else result
             }
             override fun previewOrderModification(orderId: String, entryPrice: Long): OrderPreview {

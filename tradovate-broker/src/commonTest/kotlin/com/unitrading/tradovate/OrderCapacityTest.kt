@@ -135,6 +135,27 @@ class OrderCapacityTest {
         assertTrue(rejected.message.orEmpty().contains("Product unavailable"))
     }
 
+    @Test fun zeroCapacityShowsTheSelectedAccountContractAndBrokerComment() = runTest {
+        val wire = MockTradovateWire()
+        val contract = wire.snapshot.array("contracts").single()
+        wire.snapshot = JsonObject(wire.snapshot + ("contracts" to JsonArray(listOf(JsonObject(contract + ("name" to JsonPrimitive("NNQZ6")))))))
+        wire.capacityCheck = { body ->
+            assertEquals(101L, body.long("accountId"))
+            assertEquals(200L, body.array("orders").single().long("contractId"))
+            assertEquals(1L, body.array("orders").single().long("orderQty"))
+            buildJsonObject { put("rejectReason", "MaxOrderQtyLimitReached"); put("comment", "Account maximum is zero") }
+        }
+        val broker = TradovateBroker(TradovateSession(TradovateEnvironment.DEMO, "test-access-token-1234567890", null, 42, "test", 4102444800000),
+            wire, backgroundScope, { 1_798_589_000_000L })
+        broker.connect(); broker.watch("NNQZ6", Timeframe.M5); runCurrent()
+        val value = broker.openSession("101").orderCapacity(OrderRequest("NNQZ6", Side.BUY, OrderKind.MARKET, 100))
+        assertEquals(0, value.maximumLotsHundredths)
+        assertTrue(value.message.orEmpty().contains("账户 ID：101"))
+        assertTrue(value.message.orEmpty().contains("NNQZ6（ID：200）"))
+        assertTrue(value.message.orEmpty().contains("Account maximum is zero"))
+        assertTrue(wire.requests.none { it.path == "order/placeorder" || it.path == "order/placeoso" })
+    }
+
     @Test fun changingCapacityDuringSearchDiscardsTheBoundary() = runTest {
         var calls = 0
         assertNull(discoverOrderCapacity { quantity ->
