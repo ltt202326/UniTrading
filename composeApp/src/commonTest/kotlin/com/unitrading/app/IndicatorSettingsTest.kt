@@ -133,7 +133,7 @@ class IndicatorSettingsTest {
     }
 
     @Test fun corruptOrUnknownSavedIndicatorsFallBackToAnEmptyStack() {
-        for (saved in listOf("broken", """{"indicators":[{"id":"1","kind":"VWAP"}]}""", """{"indicators":[{"id":"1","kind":"RSI","params":{"period":0.0}}]}""")) {
+        for (saved in listOf("broken", """{"indicators":[{"id":"1","kind":"UNKNOWN_INDICATOR"}]}""", """{"indicators":[{"id":"1","kind":"RSI","params":{"period":0.0}}]}""")) {
             val store = MemorySnapshotStore().apply { write("indicators-v1", saved) }
             val controller = IndicatorController(store)
             assertEquals(IndicatorSettings(), controller.settings.value, saved)
