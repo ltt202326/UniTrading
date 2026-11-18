@@ -91,7 +91,7 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
         scope.launch { busy = true; try { if (settings != null && controller.apply(settings)) onDismiss() } finally { busy = false } }
     }, onDismiss, "indicator-settings", "indicators-cancel", "indicators-save", dismissEnabled = !busy) {
         Column(Modifier.weight(1f).then(viewport.scrolling).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("保存后对所有品种和周期生效。", style = MaterialTheme.typography.bodyMedium, color = colors.Muted)
+            Text("设置仅应用于当前图表，切换该图表的品种或周期后继续保留。", style = MaterialTheme.typography.bodyMedium, color = colors.Muted)
             Text("添加指标", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 IndicatorKind.entries.forEach { kind ->

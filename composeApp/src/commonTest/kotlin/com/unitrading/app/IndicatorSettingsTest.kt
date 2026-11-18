@@ -10,6 +10,32 @@ import kotlinx.serialization.json.Json
 import kotlin.test.*
 
 class IndicatorSettingsTest {
+    @Test fun eachChartRemovesAndRestoresItsOwnIndicatorsAndDrawings() = runTest {
+        val store = MemorySnapshotStore()
+        val runtime = TradingRuntime(store)
+        val first = runtime.indicatorsForChart("split1")
+        val second = runtime.indicatorsForChart("split2")
+        val ema = IndicatorSettings(listOf(IndicatorConfig("ema", IndicatorKind.EXPMA)))
+        val rsi = IndicatorSettings(listOf(IndicatorConfig("rsi", IndicatorKind.RSI)))
+        assertTrue(first.apply(ema))
+        assertTrue(second.apply(rsi))
+        assertTrue(first.apply(IndicatorSettings()))
+        assertEquals(rsi, second.settings.value)
+        assertTrue(first.undo())
+        assertEquals(ema, first.settings.value)
+        assertEquals(ema, TradingRuntime(store).indicatorsForChart("split1").settings.value)
+
+        val firstDrawing = runtime.drawingsForChart("split1").apply { bind("TESTZ6") }
+        val secondDrawing = runtime.drawingsForChart("split2").apply { bind("TESTZ6") }
+        firstDrawing.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(1_000L, 100.0))
+        secondDrawing.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(1_000L, 200.0))
+        firstDrawing.removeAllDrawings()
+        assertEquals(0, firstDrawing.drawingCount())
+        assertEquals(1, secondDrawing.drawingCount())
+        firstDrawing.undo()
+        assertEquals(1, firstDrawing.drawingCount())
+        assertEquals(1, secondDrawing.drawingCount())
+    }
     @Test fun lineStylesPersistPerSeriesAndOldSettingsKeepDefaults() = runTest {
         val old = Json.decodeFromString<IndicatorSettings>("""{"indicators":[{"id":"b","kind":"BOLL"}]}""")
         assertEquals(IndicatorLineStyle(), old.indicators.single().lineStyle("上轨"))

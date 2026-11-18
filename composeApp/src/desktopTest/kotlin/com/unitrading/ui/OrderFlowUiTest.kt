@@ -116,6 +116,17 @@ class OrderFlowUiTest {
     @Test fun tabletCanReachAllTools() = panelTest(768, 1024, "tablet")
     @Test fun desktopCanReachAllTools() = panelTest(1000, 800, "desktop")
 
+    @Test fun tabletCanOpenFourChartLayout() = runDesktopComposeUiTest(width = 800, height = 1000) {
+        val broker = plugin(MutableStateFlow(snapshot(source.instruments.first())))
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(800.dp, 1000.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-layout-menu").performClick()
+        onNodeWithTag("chart-layout-FOUR_GRID").performClick()
+        onAllNodesWithTag("trading-chart").assertCountEquals(4)
+    }
+
     @Test fun domIsOpenedFromChartLayersAndClosingItStopsTheSubscription() = runDesktopComposeUiTest(width = 412, height = 860) {
         val spec = source.instruments.first()
         val watched = mutableListOf<String?>()
