@@ -88,6 +88,11 @@ class TradovateBroker(
     private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long, val quoteTime: Long, val lastTrade: Long?, val settlement: Long?)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
+    // Chart packets do not change accounts. Remember quote freshness so a chart-only update can
+    // still expire marked P&L at the same time as a full account rebuild would.
+    private var rebuiltQuoteFreshness = emptyMap<String, Boolean>()
+    private data class TradeHistoryInputs(val bookRevision: Long, val specs: Map<Long, Instrument>, val fees: Map<Long, Long?>)
+    private val tradeHistoryCache = mutableMapOf<Long, Pair<TradeHistoryInputs, List<ClosedTrade>>>()
     // v2: older entries stopped at the first page, about a month of intraday bars, and a cached series only ever grows at its end.
     private val candleCache = CandleCache(candleCacheStore, "v2-${credentials.environment.wire}-${credentials.userId}")
     private val cachedHistory = mutableMapOf<Pair<String, Timeframe>, List<Candle>>()
@@ -1337,8 +1342,10 @@ class TradovateBroker(
                 quotes = quotes + (spec.symbol to Quote(bid, ask, quoteTime, next.lastTrade, next.settlement))
             }
         }
-        if (frame.str("e") == "chart") data.array("charts").forEach(::chartEvent)
-        rebuild()
+        if (frame.str("e") == "chart") {
+            data.array("charts").forEach(::chartEvent)
+            if (positionQuoteFreshness() != rebuiltQuoteFreshness) rebuild() else publish()
+        } else rebuild()
     }
 
     private fun chartEvent(chart: JsonObject) {
@@ -1416,6 +1423,11 @@ class TradovateBroker(
         }
         val nextFlows = accountFlows.toMutableMap()
         val incomplete = mutableSetOf<String>()
+        // Fills, contract metadata and fees rarely change on a market tick. Avoid re-pairing the
+        // entire execution history while holding the market socket lock for each new quote.
+        val tradeInputs = TradeHistoryInputs(book.revision, contractSpecs.toMap(), fillFees.toMap())
+        val currentAccounts = mappedAccounts.mapNotNull { it.id.toLongOrNull() }.toSet()
+        tradeHistoryCache.keys.retainAll(currentAccounts)
         for (account in mappedAccounts) {
             val aid = account.id.toLong()
             val orders = book.list("order").filter { it.long("accountId") == aid }
@@ -1494,14 +1506,18 @@ class TradovateBroker(
             val margin = finance?.moneyValue("initialMargin")
             val drawdown = accountDrawdown(tradovateDrawdownRule(book.item("accountRiskStatus", aid), book.item("userAccountAutoLiq", aid)),
                 tradovateAccountValue(estimatedEquity, finance?.moneyValue("netLiq"), positions.isEmpty()))
+            val cachedTrades = tradeHistoryCache[aid]
+            val trades = if (cachedTrades?.first == tradeInputs) cachedTrades.second else
+                pairedTrades(book, aid, contractSpecs, fillFees).also { tradeHistoryCache[aid] = tradeInputs to it }
             val snapshot = AccountSnapshot(account.id, balance ?: 0, equity ?: 0, margin ?: 0, positions, pending,
-                trades = pairedTrades(book, aid, contractSpecs, fillFees), events = localEvents[account.id] ?: emptyList(), executions = fills,
+                trades = trades, events = localEvents[account.id] ?: emptyList(), executions = fills,
                 balanceKnown = balance != null, equityKnown = equity != null, marginKnown = margin != null, equityEstimated = estimatedEquity != null && positions.isNotEmpty(),
                 dailyPnl = financials[aid]?.dailyPnl, drawdown = drawdown)
             nextFlows.getOrPut(account.id) { MutableStateFlow(snapshot) }.value = snapshot
         }
         incompleteAccounts = incomplete.toSet()
         accountFlows = nextFlows.toMap()
+        rebuiltQuoteFreshness = positionQuoteFreshness()
         mutableCatalog.value = BrokerCatalog((contractSpecs.values + continuousRoutes.values.map { it.spec }).distinctBy { it.symbol }.sortedBy { it.symbol }, mappedAccounts)
         publish()
     }
@@ -1534,6 +1550,8 @@ class TradovateBroker(
             statusMessage = message, tradingReady = connected && marketReady && !connecting && !synchronizing && !unresolved && !pending,
             connectionLatencyMs = latencyMs.takeIf { connected && !stopped && latencySampleAtMs?.let { now() - it in 0..LATENCY_VALID_MS } == true })
     }
+    private fun positionQuoteFreshness(): Map<String, Boolean> = accountFlows.values
+        .flatMap { it.value.positions }.map { it.symbol }.distinct().associateWith { fresh(quotes[it]) }
     private fun fresh(quote: Quote?): Boolean = quote != null && now() - quote.timeMs in -5_000..15_000
     private suspend fun rest(method: String, path: String, body: JsonObject? = null): JsonElement = requestSlots.withPermit {
         requestPace.withLock {

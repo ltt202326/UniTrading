@@ -234,7 +234,10 @@ private fun IndicatorStylePicker(index: Int, line: String, style: IndicatorLineS
         }
         Box(Modifier.weight(1f)) {
             OutlinedButton({ patternOpen = true }, Modifier.fillMaxWidth().height(48.dp).testTag("indicator-pattern-$index-$line"),
-                shape = MaterialTheme.shapes.small, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("线型 ${style.pattern.label}", maxLines = 1) }
+                shape = MaterialTheme.shapes.small, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("线型 ", maxLines = 1)
+                Text(style.pattern.label, maxLines = 1)
+            }
             DropdownMenu(patternOpen, { patternOpen = false }) {
                 IndicatorLinePattern.entries.forEach { pattern ->
                     DropdownMenuItem(text = { Text(pattern.label) }, onClick = { onChange(style.copy(pattern = pattern)); patternOpen = false },

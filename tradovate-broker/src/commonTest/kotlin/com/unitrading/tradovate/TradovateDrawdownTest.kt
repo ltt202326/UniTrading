@@ -139,7 +139,10 @@ class TradovateDrawdownTest {
         assertEquals(25_050_000_000, account.state.value.equityMicros, "cash plus ten points on one MES")
         assertEquals(550_000_000, marked.roomMicros, "the room is the equity beside it less the line")
         assertEquals(DrawdownValueSource.QUOTES, marked.source)
+        // A chart-only packet must still notice that the position's quote has expired.
         time += 60_000
+        wire.market.queue.send("""a[{"e":"chart","d":{"charts":[]}}]"""); runCurrent()
+        assertEquals(DrawdownValueSource.SNAPSHOT, account.state.value.drawdown!!.source)
         wire.account.entity("accountRiskStatus", obj("""{"id":100,"maxNetLiq":26000}""")); runCurrent()
         val stale = account.state.value.drawdown!!
         assertEquals(400_000_000, stale.roomMicros, "without a fresh quote the broker's snapshot stands")

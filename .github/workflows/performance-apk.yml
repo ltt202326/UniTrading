@@ -31,6 +31,10 @@ jobs:
           name: UniTrading-Performance-Android-Debug
           path: androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
           if-no-files-found: error
+      - name: Run focused chart and risk tests
+        run: |
+          ./gradlew :tradovate-broker:desktopTest --tests '*TradovateDrawdownTest' --tests '*CandleCacheTest' --no-daemon
+          xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*IndicatorsTest' --tests '*IndicatorUiTest' --no-daemon
       - name: Run indicator and broker tests
         run: xvfb-run -a ./gradlew :tradovate-broker:desktopTest :composeApp:desktopTest --continue --no-daemon
       - name: Save test reports
@@ -42,3 +46,4 @@ jobs:
             tradovate-broker/build/test-results/desktopTest/*.xml
             composeApp/build/test-results/desktopTest/*.xml
           if-no-files-found: ignore
+
