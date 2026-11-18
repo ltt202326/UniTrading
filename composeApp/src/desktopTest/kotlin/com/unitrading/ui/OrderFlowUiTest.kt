@@ -155,6 +155,9 @@ class OrderFlowUiTest {
         onNodeWithTag("chart-layers").performClick()
         onNodeWithText("DOM 盘口").performClick()
         onNodeWithTag("dom-panel").assertIsDisplayed()
+        onNodeWithTag("desktop-dom").assertIsDisplayed()
+        onNodeWithTag("desktop-sidebar").assertIsDisplayed()
+        onNodeWithTag("resize-dom").assertExists()
         onNodeWithTag("dom-prices").assertIsDisplayed()
         capture("dom-desktop-chart")
     }
