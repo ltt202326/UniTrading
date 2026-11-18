@@ -32,4 +32,13 @@ jobs:
           path: androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
           if-no-files-found: error
       - name: Run indicator and broker tests
-        run: xvfb-run -a ./gradlew :tradovate-broker:desktopTest :composeApp:desktopTest --no-daemon
+        run: xvfb-run -a ./gradlew :tradovate-broker:desktopTest :composeApp:desktopTest --continue --no-daemon
+      - name: Save test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Performance-test-reports
+          path: |
+            tradovate-broker/build/test-results/desktopTest/*.xml
+            composeApp/build/test-results/desktopTest/*.xml
+          if-no-files-found: ignore
