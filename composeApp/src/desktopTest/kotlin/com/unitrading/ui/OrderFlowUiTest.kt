@@ -130,7 +130,7 @@ class OrderFlowUiTest {
         onNodeWithTag("dom-prices").assertIsDisplayed()
         capture("dom-mobile-chart")
         onNodeWithTag("close-dom").performClick()
-        waitUntil(5_000) { watched.lastOrNull() == null }
+        waitUntil(timeoutMillis = 5_000L) { watched.lastOrNull() == null }
         onNodeWithTag("dom-panel").assertDoesNotExist()
     }
 
