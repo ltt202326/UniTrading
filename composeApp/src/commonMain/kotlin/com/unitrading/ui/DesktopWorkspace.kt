@@ -272,7 +272,7 @@ private fun TerminalBar(summary: String, open: Boolean, extra: @Composable RowSc
 
 /** A native rail destination whose pill marks an open panel. Several panels can stay open, so each also reports as a toggle. */
 @Composable
-private fun RailToggle(icon: ImageVector, name: String, tag: String, open: Boolean, enabled: Boolean = true, onToggle: () -> Unit) {
+internal fun RailToggle(icon: ImageVector, name: String, tag: String, open: Boolean, enabled: Boolean = true, onToggle: () -> Unit) {
     Box(Modifier.width((PANEL_RAIL - 1f).dp).heightIn(min = 80.dp).testTag("$tag-item"), contentAlignment = Alignment.Center) {
         NavigationRailItem(open, onToggle, { Icon(icon, contentDescription = null) },
             Modifier.testTag(tag).semantics {

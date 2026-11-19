@@ -312,6 +312,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val orderFlowSupported = domSupported && plugin.descriptor.environment !in setOf(BrokerEnvironment.REMOTE_DEMO, BrokerEnvironment.LIVE)
         var showOrderFlow by remember(plugin) { mutableStateOf(false) }
         var showDom by remember(plugin) { mutableStateOf(false) }
+        // A broker currently exposes one depth stream. Each detached window may open DOM,
+        // but the stream follows the focused window and never displays another symbol's book.
+        val detachedDomOpen = remember(plugin) { mutableStateMapOf<String, Boolean>() }
         var orderPanelState by orderSession.panelState
         // The docked order bar's "更多设置" fold. It opens at once and is saved, so the next order and the next start find it as it was left.
         // When the latest change cannot be saved the fold goes back to the saved one, as the preferences themselves do.
@@ -437,8 +440,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         // Every chart window stays live; the broker serves the one being worked on first.
         val parkedSeries = visibleParkedCharts.values.map { it.symbol to it.timeframe }
         LaunchedEffect(plugin, symbol, executionSymbol, timeframe, parkedSeries) { plugin.watchAll((listOf(symbol to timeframe) + parkedSeries).distinct()) }
-        LaunchedEffect(plugin, symbol, executionSymbol, showOrderFlow, showDom, mobileTab) {
-            plugin.watchOrderFlow(symbol.takeIf { showOrderFlow || showDom })
+        val focusedDetached = detachedWorkspaces.firstOrNull { chartWindowKey(it) == activeWindow }
+        val detachedDomActive = focusedDetached?.let { detachedDomOpen[it] == true && workspaceOf(activeChart) == it } == true
+        val mainDomActive = focusedDetached == null && (showOrderFlow || showDom)
+        LaunchedEffect(plugin, symbol, executionSymbol, mainDomActive, detachedDomActive, mobileTab) {
+            plugin.watchOrderFlow(symbol.takeIf { mainDomActive || detachedDomActive })
         }
         DisposableEffect(plugin) { onDispose { plugin.watchOrderFlow(null) } }
         LaunchedEffect(symbol, executionSymbol) {
@@ -622,14 +628,18 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         fun clearAccountEditors() {
             confirmation = null; protection = null; pendingEdit = null; pendingProtection = null; standaloneEdit = null
+            // A review opened in another window must not survive a global account change.
+            flattenReview = null
             focusedTrade = null; focusedExecution = null; selectedPositionId = null
             showOrder = false; showDraft = false; orderPanelState = MobileOrderPanelState.CLOSED
         }
         fun chooseBroker(value: String) {
-            if (!busy && value != plugin.descriptor.id) { clearAccountEditors(); selectBroker(value) }
+            if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null && value != plugin.descriptor.id) {
+                clearAccountEditors(); selectBroker(value)
+            }
         }
         fun chooseAccount(value: String) {
-            if (!busy && catalog.accounts.any { it.id == value }) {
+            if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null && catalog.accounts.any { it.id == value }) {
                 if (value != accountId) clearAccountEditors()
                 manuallySelected = true
                 chosenAccountId = value
@@ -1454,7 +1464,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val dialogWindow by rememberUpdatedState(remember(dialogsOpen) { activeWindow }.takeIf { it in liveWindows })
                 val noticeWindow by rememberUpdatedState(activeWindow.takeIf { it in liveWindows })
                 val mainFocused = LocalWindowInfo.current.isWindowFocused
-                LaunchedEffect(mainFocused) { if (mainFocused) activeWindow = null }
+                LaunchedEffect(mainFocused) {
+                    if (mainFocused) {
+                        activeWindow = null
+                        if (!dialogsOpen && chartWindowsShown) activateChart(workspaceSelected[selectedWorkspace] ?: selectedWorkspace)
+                    }
+                }
                 val windowOverlay: @Composable (String) -> Unit = { window ->
                     val focused = LocalWindowInfo.current.isWindowFocused
                     LaunchedEffect(focused) { if (focused) activeWindow = window }
@@ -1524,13 +1539,25 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         val tabInstrument = catalog.instruments.firstOrNull { it.symbol == tabSymbol }
                         workspaceTabData(id, tabSymbol, tabInstrument, tabInstrument?.priceSymbol?.let { market.quotes[it] }, market.connected)
                     } else emptyList()
-                val latestTitleTabs = rememberUpdatedState<@Composable () -> Unit>({
-                    WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces,
-                        Modifier.fillMaxWidth(), canDetach = canDetachWorkspaces, touchSized = tabletWorkspaces)
-                })
+                // The Windows title bar is composed outside this part of the screen. Publish the
+                // actual tab data as state: a remembered composable lambda alone can keep the
+                // title bar's first quote snapshot until some other title-bar interaction.
+                val titleTabs = rememberUpdatedState(tabs)
+                val titleSelection = rememberUpdatedState(selectedWorkspace)
+                val titleSelect = rememberUpdatedState<(String) -> Unit>(::selectWorkspace)
+                val titleDetach = rememberUpdatedState<(String) -> Unit>(::detachWorkspace)
+                val titleClose = rememberUpdatedState<(String) -> Unit>(::closeChart)
+                val titleReorder = rememberUpdatedState<(List<String>) -> Unit>(::reorderWorkspaces)
+                val titleCanDetach = rememberUpdatedState(canDetachWorkspaces)
+                val titleTouchSized = rememberUpdatedState(tabletWorkspaces)
+                val titleContent: @Composable () -> Unit = {
+                    WorkspaceTabStrip(titleTabs.value, titleSelection.value, titleSelect.value, titleDetach.value,
+                        titleClose.value, titleReorder.value, Modifier.fillMaxWidth(),
+                        canDetach = titleCanDetach.value, touchSized = titleTouchSized.value)
+                }
                 DisposableEffect(titleBarSlot, nativeDesktop, desktop) {
                     if (titleBarSlot != null && nativeDesktop && desktop) {
-                        val registered: @Composable () -> Unit = { latestTitleTabs.value.invoke() }
+                        val registered: @Composable () -> Unit = { titleContent() }
                         titleBarSlot.content = registered
                         onDispose { if (titleBarSlot.content === registered) titleBarSlot.content = null }
                     } else onDispose { }
@@ -1546,7 +1573,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                            Box(Modifier.weight(1f).fillMaxHeight()) { latestTitleTabs.value.invoke() }
+                            Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
                         }
                         DividerLine()
                     }
@@ -1556,13 +1583,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                            Box(Modifier.weight(1f).fillMaxHeight()) { latestTitleTabs.value.invoke() }
+                            Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
                         }
                         DividerLine()
                     }
-                    if (unifiedChartBar) {
-                        val desktopControls: @Composable () -> Unit = {
+                    val desktopControls: @Composable () -> Unit = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                val accountActionsReady = !busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null
                                 // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
                                 Row(Modifier.testTag("desktop-flatten-actions"), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1572,26 +1599,32 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .6f))
                                     val shape = RoundedCornerShape(7.dp)
                                     val outline = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                    OutlinedButton(onClick = { flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account))) },
+                                    OutlinedButton(onClick = {
+                                        if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null)
+                                            flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account)))
+                                    },
                                         modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-selected-account"),
-                                        enabled = !busy && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
+                                        enabled = accountActionsReady && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
                                         Text("平仓此子账户", maxLines = 1)
                                     }
                                     OutlinedButton(onClick = {
-                                        val (targets, skipped) = bulkFlattenTargets(registry.plugins)
-                                        if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
-                                    }, modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-all-accounts"), enabled = !busy,
+                                        if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null) {
+                                            val (targets, skipped) = bulkFlattenTargets(registry.plugins)
+                                            if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
+                                        }
+                                    }, modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-all-accounts"), enabled = accountActionsReady,
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
                                         Text("平仓全部账户", maxLines = 1)
                                     }
                                 }
                                 Spacer(Modifier.width(32.dp))
                                 AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
-                                    Modifier.width(desktopPickerWidth).testTag("desktop-trade-accounts"), enabled = !busy,
+                                    Modifier.width(desktopPickerWidth).testTag("desktop-trade-accounts"), enabled = accountActionsReady,
                                     dense = true, aliases = runtime.accountAliases, emphasize = true, inline = true, inlineLoginLabel = "平台")
                             }
-                        }
+                    }
+                    if (unifiedChartBar) {
                         val toolbarStatus: @Composable () -> Unit = {
                             if (!desktopStyle) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                 Modifier.width(accountPickerWidth), enabled = !busy,
@@ -1647,42 +1680,73 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                     if (desktop) {
-                        DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
-                            market = { m, minimize -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch, panel = true, onClose = minimize) },
-                            chart = chart,
-                            order = { m, minimize -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Surface), environment = environment,
-                                capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
-                                onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request) },
-                            terminal = { m ->
-                                var section by remember(plugin, accountId) { mutableStateOf(TerminalSection.POSITIONS) }
-                                val tabs = listOf(TerminalSection.POSITIONS to "持仓 ${account.positions.size}",
-                                    TerminalSection.ORDERS to "挂单 ${terminalOrders(account).rows.size}",
-                                    TerminalSection.EXECUTIONS to "成交 ${account.executions.size}",
-                                    TerminalSection.CLOSED_TRADES to "平仓记录 ${analyticsTrades.size}")
-                                Column(m.background(colors.Surface)) {
-                                    if (desktopStyle) {
-                                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).horizontalScroll(rememberScrollState())
-                                            .testTag("desktop-trade-actions"), verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            tabs.forEach { (value, label) ->
-                                                FilterChip(section == value, { section = value }, label = { Text(label) },
-                                                    modifier = Modifier.testTag("desktop-trade-tab-${value.name}"))
-                                            }
-                                        }
-                                        AccountRiskNotice(riskMessage, riskTrigger, session.account.currency, Modifier.padding(horizontal = 12.dp))
-                                    }
-                                    TradeTerminal(plugin, account, market, selectedPositionId, false,
-                                        onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null },
-                                        onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
-                                        onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
-                                        modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) },
-                                        section = section.takeIf { desktopStyle }, historyTrades = if (desktopStyle) analyticsTrades else account.trades)
+                        fun readyForWorkspace(target: String): Boolean {
+                            val currentBroker = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
+                            val currentAccount = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
+                            return activeChart == target && restoring == null && chosenSymbol == symbol && currentAccount == accountId && currentBroker === plugin
+                        }
+                        fun workInWorkspace(target: String, action: () -> Unit) {
+                            if (confirmation != null || flattenReview != null || flattening || flattenResults != null) return
+                            if (!readyForWorkspace(target)) { activateChart(target); return }
+                            action()
+                        }
+                        @Composable fun workspaceOrder(target: String, m: Modifier, minimize: () -> Unit) {
+                            if (!readyForWorkspace(target)) {
+                                Column(m.background(colors.Surface).padding(16.dp).testTag("inactive-workspace-order-$target"),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("下单 · ${chartSlot(target)?.symbol.orEmpty()}", style = MaterialTheme.typography.titleMedium)
+                                    Text(if (activeChart == target) "正在加载当前图表合约" else "切换到此窗口后显示对应合约的下单面板",
+                                        color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                                    if (activeChart != target) Button({ activateChart(target) }, Modifier.testTag("activate-workspace-order-$target")) { Text("激活此窗口") }
                                 }
-                            }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
+                            } else OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                                { workInWorkspace(target) { request?.let { reviewTrade(Confirmation.Place(it)) } } },
+                                m.background(colors.Surface), environment = environment, capacity = capacity,
+                                onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
+                                onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request)
+                        }
+                        @Composable fun workspaceTerminal(target: String, m: Modifier) {
+                            var section by remember(plugin, accountId, target) { mutableStateOf(TerminalSection.POSITIONS) }
+                            val sections = listOf(TerminalSection.POSITIONS to "持仓 ${account.positions.size}",
+                                TerminalSection.ORDERS to "挂单 ${terminalOrders(account).rows.size}",
+                                TerminalSection.EXECUTIONS to "成交 ${account.executions.size}",
+                                TerminalSection.CLOSED_TRADES to "平仓记录 ${analyticsTrades.size}")
+                            Column(m.background(colors.Surface)) {
+                                if (desktopStyle) {
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).horizontalScroll(rememberScrollState())
+                                        .testTag("desktop-trade-actions"), verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        sections.forEach { (value, label) ->
+                                            FilterChip(section == value, { section = value }, label = { Text(label) },
+                                                modifier = Modifier.testTag("desktop-trade-tab-${value.name}"))
+                                        }
+                                    }
+                                    AccountRiskNotice(riskMessage, riskTrigger, session.account.currency, Modifier.padding(horizontal = 12.dp))
+                                }
+                                TradeTerminal(plugin, account, market, selectedPositionId, false,
+                                    onSelectPosition = { p -> workInWorkspace(target) { focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null } },
+                                    onSelectTrade = { t -> workInWorkspace(target) { focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null } },
+                                    onClose = { p -> workInWorkspace(target) { reviewTrade(Confirmation.Close(p)) } },
+                                    onProtect = { p -> workInWorkspace(target) { editProtection(p) } },
+                                    onCancel = { o -> workInWorkspace(target) { reviewTrade(Confirmation.Cancel(o)) } },
+                                    onEditOrder = { o -> workInWorkspace(target) { editPending(o) } }, busy = busy,
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                    onProtectOrder = { o -> workInWorkspace(target) { editPendingProtection(o) } },
+                                    section = section.takeIf { desktopStyle }, historyTrades = if (desktopStyle) analyticsTrades else account.trades)
+                            }
+                        }
+                        val mainTarget = workspaceSelected[selectedWorkspace] ?: selectedWorkspace
+                        val mainSlot = chartSlot(mainTarget)
+                        val mainInstrument = catalog.instruments.firstOrNull { it.symbol == mainSlot?.symbol }
+                        DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
+                            market = { m, minimize -> MarketWatch(plugin, market, account, mainSlot?.symbol ?: symbol,
+                                { value -> if (!dialogsOpen) { activateChart(mainTarget); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = minimize) },
+                            chart = chart,
+                            order = { m, minimize -> workspaceOrder(mainTarget, m, minimize) },
+                            terminal = { m -> workspaceTerminal(mainTarget, m) }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
-                            dom = if (domSupported) { { m, minimize -> DomPanel(plugin, instrument,
-                                account.orders.filter { it.request.symbol == executionSymbol }, m, minimize) } } else null,
+                            dom = if (domSupported && mainInstrument != null) { { m, minimize -> DomPanel(plugin, mainInstrument,
+                                account.orders.filter { it.request.symbol == mainInstrument.executionSymbol }, m, minimize) } } else null,
                             domOpen = showDom, onDomOpenChange = { showDom = it },
                             orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it }, windowOverlay = windowOverlay,
                             analytics = if (desktopStyle) { { m, close ->
@@ -1709,15 +1773,27 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         val chartWindows = LocalPanelWindowHost.current
                         val layoutPreferences by runtime.desktopLayout.preferences.collectAsState()
                         if (chartWindows != null) detachedWorkspaces.forEach { id -> key(id) {
-                            val slot = chartSlot(workspaceSelected[id] ?: id)
+                            val target = workspaceSelected[id] ?: id
+                            val slot = chartSlot(target)
                             val detachedInstrument = catalog.instruments.firstOrNull { it.symbol == slot?.symbol }
                             val detachedQuote = workspaceTabData(id, slot?.symbol.orEmpty(), detachedInstrument,
                                 detachedInstrument?.priceSymbol?.let { market.quotes[it] }, market.connected)
                             val window = chartWindowKey(id)
-                            chartWindows.Window(window, "UniTrading · 图表 · ${slot?.symbol.orEmpty()} · ${slot?.timeframe?.label.orEmpty()}", layoutPreferences.windows[window], DpSize(1000.dp, 680.dp),
+                            chartWindows.Window(window, "UniTrading · 图表 · ${slot?.symbol.orEmpty()} · ${slot?.timeframe?.label.orEmpty()}", layoutPreferences.windows[window], DpSize(1280.dp, 800.dp),
                                 onBounds = { runtime.desktopLayout.setWindowBounds(window, it); scope.launch { runtime.desktopLayout.save() } },
                                 onClose = { dockWorkspace(id) }) {
                                 WindowSurface(window, windowOverlay) {
+                                    val childFocused = LocalWindowInfo.current.isWindowFocused
+                                    LaunchedEffect(childFocused) {
+                                        if (childFocused) {
+                                            activeWindow = window
+                                            if (!dialogsOpen) activateChart(workspaceSelected[id] ?: id)
+                                        }
+                                    }
+                                    fun activateDetached() {
+                                        activeWindow = window
+                                        if (!dialogsOpen) activateChart(workspaceSelected[id] ?: id)
+                                    }
                                     Column(Modifier.fillMaxSize()) {
                                         Row(Modifier.fillMaxWidth().background(colors.Surface), verticalAlignment = Alignment.CenterVertically) {
                                             var dragged by remember(id) { mutableStateOf(false) }
@@ -1741,7 +1817,31 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             }
                                             TextButton({ dockWorkspace(id) }, Modifier.testTag("dock-workspace-$id")) { Text("收回标签") }
                                         }
-                                        workspaceView(id, Modifier.weight(1f).fillMaxWidth(), true)
+                                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(colors.Surface)
+                                            .pointerInput(window) {
+                                                awaitPointerEventScope { while (true) {
+                                                    if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activeWindow = window
+                                                } }
+                                            }.padding(horizontal = 6.dp).testTag("detached-account-toolbar-$id"),
+                                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            desktopControls()
+                                            Text("账户与主窗口同步", color = colors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                        }
+                                        DividerLine()
+                                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                                            DetachedWorkspace(id,
+                                                chart = { m -> workspaceView(id, m, true) },
+                                                market = { m, close -> MarketWatch(plugin, market, account, slot?.symbol ?: symbol,
+                                                    { value -> if (!dialogsOpen) { activateDetached(); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = close) },
+                                                order = { m, close -> workspaceOrder(target, m, close) },
+                                                terminal = { m -> workspaceTerminal(target, m) },
+                                                terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
+                                                dom = if (domSupported && detachedInstrument != null) { { m, close ->
+                                                    DomPanel(plugin, detachedInstrument, account.orders.filter { it.request.symbol == detachedInstrument.executionSymbol }, m, close)
+                                                } } else null,
+                                                onDomOpenChange = { open -> if (open) detachedDomOpen[id] = true else detachedDomOpen.remove(id) },
+                                                onActivate = ::activateDetached)
+                                        }
                                     }
                                 }
                             }

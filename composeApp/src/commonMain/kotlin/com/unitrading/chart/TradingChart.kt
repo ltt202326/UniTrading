@@ -390,8 +390,9 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) Text(if (instrument.symbol == "@MCL")
-            "连续图表 @MCL · K线 / 下单 / 报价 ${instrument.executionLabel} · 当前主力历史" else
+        if (instrument.isContinuous) Text(if (instrument.symbol in setOf("@MCL", "@NNQ", "@NES") &&
+            environment in setOf(BrokerEnvironment.REMOTE_DEMO, BrokerEnvironment.LIVE))
+            "连续图表 ${instrument.symbol} · K线 / 下单 / 报价 ${instrument.executionLabel} · 当前主力历史" else
             "连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",
             Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route"), style = MaterialTheme.typography.labelSmall, color = colors.Accent)
         if (compact && !chrome.sharedToolbar) {

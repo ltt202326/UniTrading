@@ -21,6 +21,7 @@ import androidx.compose.ui.window.FrameWindowScope
 import androidx.compose.ui.window.WindowState
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
+import com.unitrading.broker.Timeframe
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
@@ -198,6 +199,44 @@ class DesktopWorkspaceTabsUiTest {
             assertTrue(accounts.top >= toolbar.top && accounts.bottom <= toolbar.bottom + 1f)
             val out = File("../artifacts/desktop-tabs/windows-title-tabs.png").also { it.parentFile.mkdirs() }
             ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
+        } finally { compose.runOnIdle { frame.dispose() } }
+    }
+
+    @Test fun restoredWindowsTitleUpdatesAllQuotesWithoutSelectingEachTab() {
+        val slot = DesktopTitleBarSlot()
+        lateinit var frame: ComposeWindow
+        compose.runOnIdle { frame = ComposeWindow() }
+        val windowScope = object : FrameWindowScope { override val window: ComposeWindow = frame }
+        val state = WindowState()
+        runBlocking {
+            assertTrue(runtime.chartPreferences.setLastChart(broker.descriptor.id, "TESTZ6", Timeframe.M5))
+            assertTrue(runtime.chartPreferences.setExtraCharts(broker.descriptor.id, listOf(Triple("c1", "OTHRZ6", Timeframe.M5))))
+            assertTrue(runtime.chartPreferences.setWorkspaces(broker.descriptor.id, emptyMap(), emptyMap(), emptyList(),
+                emptyMap(), emptySet(), "main", listOf("main", "c1")))
+        }
+        runtime = newRuntime()
+        try {
+            compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f), LocalChartPlatform provides ChartPlatform.DESKTOP,
+                LocalPanelWindowHost provides windows, LocalDesktopTitleBarSlot provides slot) {
+                Column(Modifier.requiredSize(1500.dp, 1000.dp)) {
+                    TradingTheme { with(windowScope) { WindowsTitleBar(slot, state, "UniTrading · 交易终端") { } } }
+                    Box(Modifier.weight(1f).fillMaxWidth()) { TradingScreen(runtime) }
+                }
+            } }
+            compose.waitForIdle()
+            compose.onNodeWithTag("workspace-price-main", useUnmergedTree = true).assertTextEquals("—")
+            compose.onNodeWithTag("workspace-price-c1", useUnmergedTree = true).assertTextEquals("—")
+            compose.waitUntil(5_000) { broker.quoteWatches.lastOrNull()?.containsAll(listOf("TESTZ6", "OTHRZ6")) == true }
+            compose.runOnIdle {
+                val first = broker.market.value.quotes.getValue("TESTZ6").copy(lastTrade = 550000, settlement = 555000)
+                val second = broker.market.value.quotes.getValue("OTHRZ6").copy(lastTrade = 701000, settlement = 700000)
+                broker.market.value = broker.market.value.copy(quotes = mapOf("TESTZ6" to first, "OTHRZ6" to second), revision = 7)
+            }
+            // No tab or chart click: restored title data must follow the next market snapshot.
+            compose.onNodeWithTag("workspace-price-main", useUnmergedTree = true).assertTextEquals("5,500.00")
+            compose.onNodeWithTag("workspace-change-main", useUnmergedTree = true).assertTextContains("−0.90%", substring = true)
+            compose.onNodeWithTag("workspace-price-c1", useUnmergedTree = true).assertTextEquals("7,010.00")
+            compose.onNodeWithTag("workspace-change-c1", useUnmergedTree = true).assertTextContains("+0.14%", substring = true)
         } finally { compose.runOnIdle { frame.dispose() } }
     }
 

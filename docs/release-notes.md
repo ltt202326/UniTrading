@@ -2,6 +2,10 @@
 
 ## 简体中文
 
+- 修复桌面重启后窗口标签的行情和涨跌幅不随快照更新的问题；各标签继续订阅各自的品种。
+- Tradovate 的 @NNQ、@NES 图表与 @MCL 一样使用成交量核实后的实际月份合约 K 线；未确认时不显示旧合约或别名 K 线，换月后切换到新主力。历史仅包含当前主力月份。
+- 桌面拖出的图表窗口新增独立的行情、DOM、下单与交易侧栏；平台和子账户与主窗口同步，并提供两个带确认的平仓入口。DOM 数据流跟随当前活动窗口；下单前检查窗口对应的图表、账户和合约。
+
 - 安卓和 iPad 平板统一使用桌面式交易、行情、分析、设置和账户工具栏；支持布局标签和排序，不能拖出系统窗口。加大平仓按钮与账户选择器之间的间距。修复安卓横屏输入时键盘打开导致界面切换、编辑器失去焦点的问题。
 
 - 桌面窗口标签支持左右拖动排序并保存顺序；安卓和 iPad 平板支持新建、切换及排序图表标签（不支持拖出独立窗口）；桌面顶部工具栏集中显示两个平仓入口和账户选择，图表右键菜单加入图标，并重新整理下单确认框；保留原有平仓确认和下单前风控校验。
@@ -35,6 +39,10 @@
 - 修复图表上部分止损、止盈线无法拖动的问题：仓位保护不能成组修改、但交易商允许逐单修改时，仍可拖动对应的 SL / TP 线。每张保护单只显示一次，拖动只修改该单，沿用交易确认与风控检查；不能改单的保护线仍只读。
 
 ## English
+
+- Refresh restored desktop tab prices and percentage changes from live market snapshots without selecting each tab.
+- For Tradovate @NNQ and @NES, use the actual bars of the volume-confirmed dated contract, as for @MCL. Hide bars while unconfirmed and switch sources on rollover; history covers only the current contract.
+- Add independent market, DOM, order and trade panels to detached desktop chart windows. Login and trading account remain shared with the main window; both flatten actions retain confirmation. The single DOM feed follows the active window, and order entry checks its chart and account first.
 
 - Use the desktop workspace, trading panels, analytics, settings and account toolbar on Android tablets and iPad; tabs can be reordered but not detached. Leave more space between the flatten actions and account selectors. Keep the active editor and responsive layout stable when the Android landscape keyboard opens.
 
