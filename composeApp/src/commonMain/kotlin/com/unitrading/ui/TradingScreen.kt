@@ -1015,6 +1015,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                 }
                 fun reviewTrade(action: Confirmation) {
+                    println("DEBUG_REVIEW busy=$busy context=${accountContextCurrent()} skip=$skipConfirmation")
                     if (busy) return
                     if (action !is Confirmation.Reset && !accountContextCurrent()) {
                         showNotice("账户已切换，请重新检查后操作", attention = true)
@@ -1585,6 +1586,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val dialogWindow = rememberUpdatedState(remember(dialogsOpen) { activeWindow }.takeIf { it in liveWindows })
                 val noticeWindow = rememberUpdatedState(activeWindow.takeIf { it in liveWindows })
                 val latestTradeDialogs = rememberUpdatedState(tradeDialogs)
+                SideEffect { if (confirmation != null) println("DEBUG_DIALOG route=${dialogWindow.value} active=$activeWindow open=$dialogsOpen") }
                 val mainFocused = LocalWindowInfo.current.isWindowFocused
                 LaunchedEffect(mainFocused) {
                     if (mainFocused) {
@@ -1838,6 +1840,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             return activeChart == target && restoring == null && chosenSymbol == symbol && accountContextCurrent()
                         }
                         fun workInWorkspace(target: String, action: () -> Unit) {
+                            println("DEBUG_WORK target=$target active=$activeChart ready=${readyForWorkspace(target)} pending=${accountOperationPending()} request=${request != null}")
                             if (accountOperationPending()) { showNotice("请先完成当前交易操作", attention = true); return }
                             if (!readyForWorkspace(target)) {
                                 activateChart(target)
@@ -1850,6 +1853,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         // Slots can be composed in a separate native window. Keep their callbacks tied to the
                         // current account and draft even when Compose reuses a lambda after switching windows.
                         val submitWorkspaceOrder = rememberUpdatedState<(String) -> Unit> { target ->
+                            println("DEBUG_SUBMIT target=$target")
                             workInWorkspace(target) {
                                 request?.let { reviewTrade(Confirmation.Place(it)) }
                                     ?: showNotice("订单参数尚未准备好，请检查后重试", attention = true)
