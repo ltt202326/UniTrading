@@ -646,6 +646,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 loginScope.launch { runtime.savedLogins.select(plugin.descriptor.id, value) }
             }
         }
+        /** An account switch in another window can precede this window's next recomposition. */
+        fun accountContextCurrent(): Boolean {
+            val currentBroker = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
+            val currentAccount = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
+            return currentBroker === plugin && currentAccount == accountId
+        }
         fun changeDraft(value: OrderDraft) {
             // Side/kind changes may seed reference protection for a manual ticket. Sizing uses the user's SL.
             draft = if (sizeByRisk && (value.side != draft.side || value.kind != draft.kind))
@@ -1589,7 +1595,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                     val desktopControls: @Composable () -> Unit = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                val accountActionsReady = !busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null
+                                val accountActionsReady = !busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null && accountContextCurrent()
                                 // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
                                 Row(Modifier.testTag("desktop-flatten-actions"), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1600,7 +1606,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     val shape = RoundedCornerShape(7.dp)
                                     val outline = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                     OutlinedButton(onClick = {
-                                        if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null)
+                                        if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null && accountContextCurrent())
                                             flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account)))
                                     },
                                         modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-selected-account"),
@@ -1609,7 +1615,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         Text("平仓此子账户", maxLines = 1)
                                     }
                                     OutlinedButton(onClick = {
-                                        if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null) {
+                                        if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null && accountContextCurrent()) {
                                             val (targets, skipped) = bulkFlattenTargets(registry.plugins)
                                             if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
                                         }
@@ -1681,9 +1687,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                     if (desktop) {
                         fun readyForWorkspace(target: String): Boolean {
-                            val currentBroker = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
-                            val currentAccount = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
-                            return activeChart == target && restoring == null && chosenSymbol == symbol && currentAccount == accountId && currentBroker === plugin
+                            return activeChart == target && restoring == null && chosenSymbol == symbol && accountContextCurrent()
                         }
                         fun workInWorkspace(target: String, action: () -> Unit) {
                             if (confirmation != null || flattenReview != null || flattening || flattenResults != null) return
