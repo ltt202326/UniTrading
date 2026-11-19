@@ -57,7 +57,8 @@ internal fun AccountContextBar(
                     Text(names.login(plugin.descriptor), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,
                         fontWeight = if (emphasize) FontWeight.SemiBold else FontWeight.Normal)
                 }
-                Icon(AppIcons.ExpandMore, null, Modifier.size(18.dp))
+                Icon(if (allowLoginSwitch) AppIcons.ExpandMore else AppIcons.Lock,
+                    if (allowLoginSwitch) null else "主账户由主窗口切换", Modifier.size(18.dp))
             }
             DropdownMenu(loginMenu && enabled && allowLoginSwitch, { loginMenu = false }) {
                 brokers.forEach { broker ->

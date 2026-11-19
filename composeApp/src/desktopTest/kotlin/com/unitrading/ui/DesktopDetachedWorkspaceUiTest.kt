@@ -116,6 +116,7 @@ class DesktopDetachedWorkspaceUiTest {
         val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
         val main = hasAnyAncestor(hasTestTag("app-toolbar"))
         onNode(hasTestTag("quick-login-picker") and child).assertIsNotEnabled()
+        onNode(hasContentDescription("主账户由主窗口切换") and child, useUnmergedTree = true).assertExists()
         onNode(hasTestTag("quick-account-picker") and child).performClick()
         onNodeWithTag("rename-account-${second.id}").assertDoesNotExist()
         onNodeWithTag("quick-account-${second.id}").performClick()
@@ -134,8 +135,10 @@ class DesktopDetachedWorkspaceUiTest {
         onNodeWithTag("detached-rail-order-c1").performScrollTo().performClick()
         onNode(hasTestTag("review-order") and child).performClick()
         onNode(hasText("子窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
+        onNode(hasTestTag("quick-account-picker") and child).assertIsNotEnabled()
         onNodeWithTag("confirm-action").performClick()
         waitUntil(timeoutMillis = 5_000) { "place:200" in broker.events }
+        waitUntil(timeoutMillis = 5_000) { runCatching { onNode(hasTestTag("quick-account-picker") and child).assertIsEnabled() }.isSuccess }
         onNodeWithTag("workspace-tab-main").performClick()
         onNode(hasTestTag("quick-account-picker") and main).assertTextContains("主窗口账户", substring = true)
         onNode(hasTestTag("quick-account-picker") and child).assertTextContains("子窗口账户", substring = true)

@@ -21,15 +21,22 @@ jobs:
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - name: Verify detached-window interactions
-        run: >-
-          xvfb-run -a ./gradlew :composeApp:desktopTest
-          --tests '*DesktopDetachedWorkspaceUiTest*'
-          --tests '*ChartContextOrderPlatformsTest*'
-          --tests '*WorkspaceAccountsTest*'
-          --tests '*DesktopWorkspaceTabsUiTest.windowsTitleTabsRespondToMouseAfterQuotesUpdate*'
-          --tests '*DesktopWorkspaceTabsUiTest.restoredWindowsTitleUpdatesAllQuotesWithoutSelectingEachTab*'
-          --tests '*WorkspaceTabDataTest*'
-          --no-daemon
+        run: |
+          set -o pipefail
+          tests=( :composeApp:desktopTest
+            --tests '*DesktopDetachedWorkspaceUiTest*'
+            --tests '*ChartContextOrderPlatformsTest*'
+            --tests '*WorkspaceAccountsTest*'
+            --tests '*DesktopWorkspaceTabsUiTest.windowsTitleTabsRespondToMouseAfterQuotesUpdate*'
+            --tests '*DesktopWorkspaceTabsUiTest.restoredWindowsTitleUpdatesAllQuotesWithoutSelectingEachTab*'
+            --tests '*WorkspaceTabDataTest*' )
+          if ! xvfb-run -a ./gradlew "${tests[@]}" --no-daemon 2>&1 | tee "$RUNNER_TEMP/first-tests.log"; then
+            if grep -Eq 'Could not resolve all artifacts|Could not find org\.jetbrains\.kotlin' "$RUNNER_TEMP/first-tests.log"; then
+              xvfb-run -a ./gradlew "${tests[@]}" --no-daemon --refresh-dependencies
+            else
+              exit 1
+            fi
+          fi
       - name: Preserve detached-window test results
         run: |
           mkdir -p artifacts/detached-test-results
