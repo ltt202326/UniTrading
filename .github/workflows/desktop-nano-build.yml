@@ -20,12 +20,17 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Verify detached-window interactions
+        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*DesktopDetachedWorkspaceUiTest*' --no-daemon
+      - name: Preserve detached-window test results
+        run: |
+          mkdir -p artifacts/detached-test-results
+          cp composeApp/build/test-results/desktopTest/*.xml artifacts/detached-test-results/
       - name: Verify desktop, order safety, nano contracts and tablet regressions
         run: >-
           xvfb-run -a ./gradlew
           :composeApp:desktopTest
           --tests '*DesktopWorkspaceTabsUiTest*'
-          --tests '*DesktopDetachedWorkspaceUiTest*'
           --tests '*TabletWorkspaceTabsUiTest*'
           --tests '*WindowsTitleBarUiTest*'
           --tests '*DesktopAccountPanelsUiTest*'

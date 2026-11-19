@@ -51,7 +51,7 @@ class DesktopDetachedWorkspaceUiTest {
         onNodeWithTag("detached-rail-order-c1").performScrollTo().performClick()
         waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("order-fields") and child).fetchSemanticsNodes().isNotEmpty() }
         onNode(hasText("OTHRZ6", substring = true) and hasAnyAncestor(hasTestTag("detached-side-panel-c1"))).assertExists()
-        onNode(hasTestTag("review-order") and child).performScrollTo().performClick()
+        onNode(hasTestTag("review-order") and child).performClick()
         onNodeWithTag("desktop-order-confirmation").assertExists()
         onNode(hasText("OTHRZ6 ·", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
         onNodeWithTag("cancel-order-review").performClick()
