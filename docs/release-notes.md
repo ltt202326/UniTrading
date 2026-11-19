@@ -3,7 +3,7 @@
 ## 简体中文
 
 - 子窗口的图表工具、平仓按钮和账户选择器与主窗口对齐；主账户随主窗口切换，子账户可独立选择并保存，别名只可在主窗口修改。账户不可用时暂停该窗口下单。
-- 图表右键或长按选择市价、限价或突破单时，先填写订单；桌面弹出下单窗口，手机和平板打开下单界面，提交时沿用风控及确认设置。
+- 图表右键或长按选择市价、限价或突破单时，先填写订单；桌面和平板展开右侧下单栏，手机打开下单界面，提交时沿用风控及确认设置。
 - 修复 Windows 标题栏中图表标签的切换、关闭、排序与弹出操作；行情刷新时仍保持操作可用。
 - 修复桌面重启后窗口标签的行情和涨跌幅不随快照更新的问题；各标签继续订阅各自的品种。
 - Tradovate 的 @NNQ、@NES（包含 @NMES 别名）图表与 @MCL 一样使用成交量核实后的实际月份合约 K 线；未确认时不显示旧合约或别名 K 线，换月后切换到新主力。历史仅包含当前主力月份。
@@ -44,7 +44,7 @@
 ## English
 
 - Align detached-window account and flatten controls with the main toolbar. The login follows the main window, while each detached window selects and restores its own subaccount; aliases are edited only in the main window. Disable trading when a selected account is unavailable.
-- A chart context-menu or long-press order opens a prefilled order form (a dialog on desktop); it is submitted with the existing risk and confirmation settings.
+- A chart context-menu or long-press order opens a prefilled order form (the right-hand panel on desktop and tablets); it is submitted with the existing risk and confirmation settings.
 - Fix selecting, closing, reordering and detaching chart tabs in the Windows title bar while quotes refresh.
 - Refresh restored desktop tab prices and percentage changes from live market snapshots without selecting each tab.
 - For Tradovate @NNQ, @NES and the @NMES alias, use the actual bars of the volume-confirmed dated contract, as for @MCL. Hide bars while unconfirmed and switch sources on rollover; history covers only the current contract.

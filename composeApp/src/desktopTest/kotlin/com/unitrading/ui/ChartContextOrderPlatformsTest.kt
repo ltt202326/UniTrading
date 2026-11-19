@@ -36,6 +36,10 @@ class ChartContextOrderPlatformsTest {
             waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("order-side-SELL").fetchSemanticsNodes().isNotEmpty() }
             onAllNodesWithTag("order-side-SELL").onFirst().assertIsSelected()
             onAllNodesWithTag("order-kind-MARKET").onFirst().assertIsSelected()
+            if (width >= 900) {
+                onNodeWithTag("desktop-order").assertIsDisplayed()
+                onNodeWithTag("order-popup").assertDoesNotExist()
+            }
             assertTrue(broker.placed.isEmpty(), "Choosing a menu item must not place an order, even when confirmation is skipped")
         }
 
@@ -43,4 +47,6 @@ class ChartContextOrderPlatformsTest {
     @Test fun iosPhoneOpensTheOrderForm() = exercise(ChartPlatform.IOS, 420, 850)
     @Test fun androidTabletOpensTheOrderForm() = exercise(ChartPlatform.ANDROID, 1280, 800)
     @Test fun ipadOpensTheOrderForm() = exercise(ChartPlatform.IOS, 1280, 800)
+    @Test fun narrowDesktopOpensTheRightHandOrderForm() = exercise(ChartPlatform.DESKTOP, 1000, 800)
+    @Test fun narrowAndroidTabletOpensTheRightHandOrderForm() = exercise(ChartPlatform.ANDROID, 1000, 800)
 }

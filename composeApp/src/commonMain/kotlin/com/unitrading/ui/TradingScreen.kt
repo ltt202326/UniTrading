@@ -925,6 +925,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val unifiedChartBar = desktop || (tablet && chartFirst)
                 val orderLayout = tradingPreferences.orderPanelLayout
                 val useOrderPopup = orderLayout == OrderPanelLayout.POPUP
+                // Context-menu orders use the right-hand ticket even in a narrower desktop/tablet workspace.
+                var contextOrderSidebar by remember { mutableStateOf(false) }
+                var contextOrderRequest by remember { mutableIntStateOf(0) }
                 // The sheet and the dock stay on the chart page for as long as an order is being prepared; the popup does not.
                 val orderOnChart = orderActive && !useOrderPopup
                 val popupVisible = chartFirst && useOrderPopup && orderOpen && confirmation !is Confirmation.Place
@@ -966,6 +969,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val workspace = workspaceOf(chartId)
                     if (desktop && workspace in detachedWorkspaces)
                         detachedOrderRequests[workspace] = (detachedOrderRequests[workspace] ?: 0) + 1
+                    else if (desktop) {
+                        contextOrderSidebar = true
+                        contextOrderRequest++
+                        showOrder = false
+                        showDom = false
+                        runtime.desktopLayout.setDetached(WorkspacePanel.ORDER, false)
+                        runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
+                        runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true)
+                        scope.launch { runtime.desktopLayout.save() }
+                    }
                     else openOrderEditor()
                 }
                 fun placePreview(order: OrderRequest): OrderPreview {
@@ -1091,10 +1104,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val entry = price?.takeUnless { kind == OrderKind.MARKET }?.let(instrument::formatPrice).orEmpty()
                     draft = OrderDraft(side, kind, draft.quantity, entry)
                     showDraft = true
-                    if (desktop) {
-                        activeWindow = workspaceOf(chartId).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
-                        showOrder = true
-                    } else openChartOrderEditor(chartId)
+                    activeWindow = workspaceOf(chartId).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
+                    openChartOrderEditor(chartId)
                 }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
@@ -1936,7 +1947,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         val mainTarget = workspaceSelected[mainWorkspace] ?: mainWorkspace
                         val mainSlot = chartSlot(mainTarget)
                         val mainInstrument = catalog.instruments.firstOrNull { it.symbol == mainSlot?.symbol }
-                        DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
+                            DesktopWorkspace(runtime.desktopLayout, wide || contextOrderSidebar, Modifier.weight(1f).fillMaxWidth(),
+                            contextOrderRequest = contextOrderRequest,
                             market = { m, minimize -> MarketWatch(plugin, market, mainAccount, mainSlot?.symbol ?: symbol,
                                 { value -> if (!dialogsOpen) { activateChart(mainTarget); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = minimize) },
                             chart = chart,

@@ -1,4 +1,4 @@
-name: Workspace tabs and cross-platform regression
+name: Side order panel and cross-platform regression
 on:
   push:
     branches: ['build/codex-window-completion-20261119']

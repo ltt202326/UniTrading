@@ -79,6 +79,7 @@ internal fun DesktopWorkspace(
     newChartWindowEnabled: Boolean = true,
     onOpenSettings: (() -> Unit)? = null,
     onResetLayout: (() -> Unit)? = null,
+    contextOrderRequest: Int = 0,
 ) {
     val preferred by controller.preferences.collectAsState()
     val error by controller.error.collectAsState()
@@ -97,6 +98,7 @@ internal fun DesktopWorkspace(
     val terminalInline = WorkspacePanel.TERMINAL !in detached
     val orderInline = wide && preferred.orderOpen && WorkspacePanel.ORDER !in detached
     var analyticsOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(contextOrderRequest) { if (contextOrderRequest > 0) analyticsOpen = false }
     val showAnalytics = analytics != null && analyticsOpen
     val sidebarInline = showAnalytics || (preferred.marketOpen && WorkspacePanel.MARKET !in detached)
     Column(modifier.testTag("desktop-workspace")) {
