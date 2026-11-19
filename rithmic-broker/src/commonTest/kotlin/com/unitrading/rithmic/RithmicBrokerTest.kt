@@ -497,6 +497,19 @@ class RithmicBrokerTest {
         assertTrue(server.requests(Rt.REQUEST_SEARCH_SYMBOLS).any { it.str(Rf.PRODUCT_CODE) == "MES" && it.str(Rf.EXCHANGE) == "CME" })
     }
 
+    @Test fun resolvingOneSavedQuoteDoesNotCancelDiscoveryOfTheNext() = runTest {
+        val server = FakeRithmicServer().apply { knownSymbols["NQZ6"] = "CME" }
+        val broker = broker(server)
+        broker.connect()
+        broker.watchQuotes(linkedSetOf("@MES", "@NQ"))
+        runCurrent()
+        assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        assertEquals("NQZ6", broker.instruments.single { it.symbol == "@NQ" }.executionSymbol)
+        assertTrue(server.requests(Rt.REQUEST_MARKET_DATA_UPDATE).any {
+            it.str(Rf.SYMBOL) == "NQZ6" && it.int(Rf.REQUEST) == RithmicEnums.REQUEST_SUBSCRIBE
+        })
+    }
+
     /** A product search spans every exchange: the login's front month lives on the exchange it can route, whatever row comes first. */
     @Test fun continuousSymbolUsesTheExchangeTheLoginCanRouteNotTheFirstListing() = runTest {
         val server = FakeRithmicServer().apply { foreignListings = mapOf("MES2" to "XEX"); deniedExchanges = setOf("XEX"); frontMonthAlias = true }

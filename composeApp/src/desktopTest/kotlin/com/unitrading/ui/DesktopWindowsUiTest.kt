@@ -180,6 +180,7 @@ class DesktopWindowsUiTest {
         compose.waitForIdle()
         compose.onNodeWithTag("plot-menu-BUY-LIMIT").performClick()
         compose.waitForIdle()
+        compose.onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("order-popup"))).performClick()
         compose.onNodeWithText("确认 Tradovate Demo 下单").assertExists()
         compose.onNodeWithTag("confirm-action").performClick()
         compose.waitUntil(5000) { broker.placed.size == 1 }

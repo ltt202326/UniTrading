@@ -22,7 +22,7 @@ private const val LATENCY_VALID_MS = 90_000L
 private const val PENDING_BRACKETS_LOCKED = "该挂单的止损/止盈关联未确认、属于 ATM 或正在处理，暂不可修改"
 private const val REMOVE_BY_CANCEL = "这里不能移除止损/止盈；要去掉一条，请撤销它的挂单"
 /** Chart only the volume-confirmed dated contract for these products; aliases may use another series. */
-internal fun usesVerifiedContractChart(symbol: String) = symbol in setOf("@MCL", "@NNQ", "@NES")
+internal fun usesVerifiedContractChart(symbol: String) = symbol in setOf("@MCL", "@NNQ", "@NES", "@NMES")
 /** How long adding the second protection line waits for the server to show the first one cancelled before giving up. */
 private const val REPLACE_WAIT_MS = 10_000L
 
@@ -503,7 +503,8 @@ class TradovateBroker(
         val ids = searchLock.withLock {
             lock.withLock { instrumentSearches[text]?.takeIf { now() - it.fetchedAt in 0 until 30_000 } }
                 ?.let { return@withLock it.ids }
-            val data = rest("GET", "contract/suggest?t=${text.encodeURLParameter()}&l=100") as? JsonArray
+            val searchText = datedContractRoot(text)
+            val data = rest("GET", "contract/suggest?t=${searchText.encodeURLParameter()}&l=100") as? JsonArray
                 ?: error("合约搜索返回无效")
             val contracts = data.map { it as? JsonObject ?: error("合约搜索返回无效") }
             require(contracts.all { (it.long("id") ?: 0) > 0 && (it.long("contractMaturityId") ?: 0) > 0 && !it.str("name").isNullOrBlank() }) {
@@ -518,6 +519,16 @@ class TradovateBroker(
         }
         // Cached discovery still retries any specification that failed to hydrate.
         hydrateContracts(ids)
+        // Preserve the saved alias even when the broker calls the product NES. The alias
+        // gets its own fresh leader verification; the copied quote is display-only.
+        if (text == "NMES") lock.withLock {
+            val base = continuousRoutes["@NES"]
+            if (base != null && "@NMES" !in continuousRoutes) {
+                continuousRoutes = continuousRoutes + ("@NMES" to base.copy(
+                    spec = base.spec.copy(symbol = "@NMES", tradeSymbol = null), checkedAt = null, validUntil = 0L))
+                rebuild()
+            }
+        }
     }
 
     override fun watchQuotes(symbols: Set<String>) {
@@ -678,7 +689,7 @@ class TradovateBroker(
      * volume correction, so a calendar tail freshly rechecks the leader on that same completed date.
      */
     private suspend fun rankContinuous(productId: Long, symbol: String, progress: suspend (Int, Int) -> Unit): VolumeLeader {
-        val root = symbol.removePrefix("@")
+        val root = datedContractRoot(symbol.removePrefix("@"))
         val completedChecked = mutableSetOf<String>()
         suspend fun rank(cached: Boolean) = selectVolumeLeader(productId, root, now(),
             read = { path -> rest("GET", path) as? JsonArray ?: error("合约或交易时段返回无效") },

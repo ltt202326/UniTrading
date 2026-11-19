@@ -67,17 +67,17 @@ class DesktopDetachedWorkspaceUiTest {
             press(MouseButton.Secondary); release(MouseButton.Secondary)
         }
         onNodeWithTag("plot-menu-BUY-MARKET").performClick()
-        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("order-fields") and child).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("order-popup").fetchSemanticsNodes().isNotEmpty() }
         assertTrue(source.placed.isEmpty(), "A child chart context menu only opens its own order form")
 
-        onNodeWithTag("detached-rail-order-c1").assertExists()
-        onNode(hasText("OTHRZ6", substring = true) and hasAnyAncestor(hasTestTag("detached-side-panel-c1"))).assertExists()
-        onNode(hasTestTag("review-order") and child).performClick()
+        onNode(hasText("OTHRZ6", substring = true) and hasAnyAncestor(hasTestTag("order-popup"))).assertExists()
+        onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("order-popup"))).performClick()
         onNodeWithTag("desktop-order-confirmation").assertExists()
         onNode(hasText("OTHRZ6 ·", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
         onNodeWithTag("cancel-order-review").performClick()
         assertTrue(source.placed.isEmpty(), "Reviewing and cancelling a child-window order never submits it")
 
+        onNodeWithTag("detached-rail-order-c1").performClick()
         onNodeWithTag("workspace-tab-main").performClick()
         onNode(hasTestTag("inactive-workspace-order-c1") and child).assertExists()
         onNode(hasTestTag("activate-workspace-order-c1") and child).performClick()
@@ -139,9 +139,9 @@ class DesktopDetachedWorkspaceUiTest {
             press(MouseButton.Secondary); release(MouseButton.Secondary)
         }
         onNodeWithTag("plot-menu-BUY-MARKET").performClick()
-        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("review-order") and child).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("order-popup"))).fetchSemanticsNodes().isNotEmpty() }
         assertTrue(broker.events.none { it.startsWith("place:") }, "A chart menu must not place an order")
-        onNode(hasTestTag("review-order") and child).performClick()
+        onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("order-popup"))).performClick()
         onNode(hasText("子窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
         onNode(hasTestTag("quick-account-picker") and child).assertIsNotEnabled()
         onNodeWithTag("confirm-action").performClick()

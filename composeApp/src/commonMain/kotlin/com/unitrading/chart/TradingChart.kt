@@ -390,7 +390,7 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) Text(if (instrument.symbol in setOf("@MCL", "@NNQ", "@NES") &&
+        if (instrument.isContinuous) Text(if (instrument.symbol in setOf("@MCL", "@NNQ", "@NES", "@NMES") &&
             environment in setOf(BrokerEnvironment.REMOTE_DEMO, BrokerEnvironment.LIVE))
             "连续图表 ${instrument.symbol} · K线 / 下单 / 报价 ${instrument.executionLabel} · 当前主力历史" else
             "连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",

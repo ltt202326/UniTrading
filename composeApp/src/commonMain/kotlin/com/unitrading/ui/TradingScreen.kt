@@ -1091,7 +1091,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val entry = price?.takeUnless { kind == OrderKind.MARKET }?.let(instrument::formatPrice).orEmpty()
                     draft = OrderDraft(side, kind, draft.quantity, entry)
                     showDraft = true
-                    openChartOrderEditor(chartId)
+                    if (desktop) {
+                        activeWindow = workspaceOf(chartId).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
+                        showOrder = true
+                    } else openChartOrderEditor(chartId)
                 }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
@@ -1103,7 +1106,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = chartFirst && useOrderPopup && orderPanelState == MobileOrderPanelState.MINIMIZED && !keyboardOpen,
                     onBackCompleted = { if (!busy) closeOrder() })
-                val activate by rememberUpdatedState<(String) -> Unit> { id -> activateChart(id) }
+                val activate = rememberUpdatedState<(String) -> Unit> { id -> activateChart(id) }
                 // One chart window. The active one shows the screen's symbol, interval, draft and selection; any other shows
                 // its own symbol and interval and becomes the active one at the first press inside it.
                 // What every chart shows, as this pass of the screen saw it. A chart's content decides from these alone, never from
@@ -1131,7 +1134,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val parked = shownCharts[chartId]
                     val shownInstrument = if (active) instrument else parked?.let { slot -> catalog.instruments.firstOrNull { it.symbol == slot.symbol } }
                     // A symbol this broker has not loaded: the window says so, and a press makes it the active chart, where another can be chosen.
-                    if (shownInstrument == null) Box(m.background(colors.Surface).pointerInput(chartId) { detectTapGestures { activate(chartId) } }.testTag("chart-unavailable-$chartId"),
+                    if (shownInstrument == null) Box(m.background(colors.Surface).pointerInput(chartId) { detectTapGestures { activate.value(chartId) } }.testTag("chart-unavailable-$chartId"),
                         contentAlignment = Alignment.Center) {
                         EmptyState("品种未加载", "${parked?.symbol.orEmpty()} 不在当前交易商已加载的合约里。点一下这里，再在图表上另选品种。", icon = AppIcons.Candlestick)
                     } else {
@@ -1198,7 +1201,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val chartIndicatorSettings by indicatorController.settings.collectAsState()
                     BoxWithConstraints(m.pointerInput(chartId) {
                         // On the Initial pass and without consuming: the press that makes this chart the active one still does what it did.
-                        awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activate(chartId) } }
+                        awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activate.value(chartId) } }
                     }.testTag("chart-view-$chartId")) {
                     // Split cells can be narrower than the desktop window that contains them.
                     val chartCompact = compact || maxWidth < 600.dp
@@ -1375,7 +1378,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 onChartAdjust = if (popupVisible) dismissOrder else null,
                                 orderNotice = if (popupVisible) orderNotice else ({}),
                                 onDiscard = if (popupVisible) ({ closeOrder() }) else null,
-                                accountName = accountName.takeIf { popupVisible })
+                                accountName = accountName)
                         }
                     }
                 }
@@ -1841,28 +1844,28 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                         // Slots can be composed in a separate native window. Keep their callbacks tied to the
                         // current account and draft even when Compose reuses a lambda after switching windows.
-                        val submitWorkspaceOrder by rememberUpdatedState<(String) -> Unit> { target ->
+                        val submitWorkspaceOrder = rememberUpdatedState<(String) -> Unit> { target ->
                             workInWorkspace(target) { request?.let { reviewTrade(Confirmation.Place(it)) } }
                         }
-                        val selectWorkspacePosition by rememberUpdatedState<(String, Position) -> Unit> { target, p ->
+                        val selectWorkspacePosition = rememberUpdatedState<(String, Position) -> Unit> { target, p ->
                             workInWorkspace(target) { focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null }
                         }
-                        val selectWorkspaceTrade by rememberUpdatedState<(String, ClosedTrade) -> Unit> { target, t ->
+                        val selectWorkspaceTrade = rememberUpdatedState<(String, ClosedTrade) -> Unit> { target, t ->
                             workInWorkspace(target) { focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null }
                         }
-                        val closeWorkspacePosition by rememberUpdatedState<(String, Position) -> Unit> { target, p ->
+                        val closeWorkspacePosition = rememberUpdatedState<(String, Position) -> Unit> { target, p ->
                             workInWorkspace(target) { reviewTrade(Confirmation.Close(p)) }
                         }
-                        val protectWorkspacePosition by rememberUpdatedState<(String, Position) -> Unit> { target, p ->
+                        val protectWorkspacePosition = rememberUpdatedState<(String, Position) -> Unit> { target, p ->
                             workInWorkspace(target) { editProtection(p) }
                         }
-                        val cancelWorkspaceOrder by rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
+                        val cancelWorkspaceOrder = rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
                             workInWorkspace(target) { reviewTrade(Confirmation.Cancel(o)) }
                         }
-                        val editWorkspaceOrder by rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
+                        val editWorkspaceOrder = rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
                             workInWorkspace(target) { editPending(o) }
                         }
-                        val protectWorkspaceOrder by rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
+                        val protectWorkspaceOrder = rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
                             workInWorkspace(target) { editPendingProtection(o) }
                         }
                         @Composable fun workspaceOrder(target: String, m: Modifier, minimize: () -> Unit) {
@@ -1877,7 +1880,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     if (activeChart != target) Button({ activateChart(target) }, Modifier.testTag("activate-workspace-order-$target")) { Text("激活此窗口") }
                                 }
                             } else OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                { submitWorkspaceOrder(target) },
+                                { submitWorkspaceOrder.value(target) },
                                 m.background(colors.Surface), environment = environment, capacity = capacity,
                                 onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
                                 onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request,
@@ -1910,14 +1913,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         runtime.accountRisk.lockingTrigger(plugin, targetSession), targetSession.account.currency, Modifier.padding(horizontal = 12.dp))
                                 }
                                 TradeTerminal(plugin, targetAccount, market, selectedPositionId.takeIf { readyForWorkspace(target) }, false,
-                                    onSelectPosition = { p -> selectWorkspacePosition(target, p) },
-                                    onSelectTrade = { t -> selectWorkspaceTrade(target, t) },
-                                    onClose = { p -> closeWorkspacePosition(target, p) },
-                                    onProtect = { p -> protectWorkspacePosition(target, p) },
-                                    onCancel = { o -> cancelWorkspaceOrder(target, o) },
-                                    onEditOrder = { o -> editWorkspaceOrder(target, o) }, busy = busy,
+                                    onSelectPosition = { p -> selectWorkspacePosition.value(target, p) },
+                                    onSelectTrade = { t -> selectWorkspaceTrade.value(target, t) },
+                                    onClose = { p -> closeWorkspacePosition.value(target, p) },
+                                    onProtect = { p -> protectWorkspacePosition.value(target, p) },
+                                    onCancel = { o -> cancelWorkspaceOrder.value(target, o) },
+                                    onEditOrder = { o -> editWorkspaceOrder.value(target, o) }, busy = busy,
                                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                                    onProtectOrder = { o -> protectWorkspaceOrder(target, o) },
+                                    onProtectOrder = { o -> protectWorkspaceOrder.value(target, o) },
                                     section = section.takeIf { desktopStyle }, historyTrades = if (desktopStyle) targetTrades else targetAccount.trades)
                             }
                         }

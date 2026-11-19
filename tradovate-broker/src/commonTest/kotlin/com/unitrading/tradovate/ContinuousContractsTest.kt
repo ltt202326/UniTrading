@@ -707,6 +707,18 @@ class ContinuousContractsTest {
         assertFailsWith<IllegalArgumentException> { select("ES", mapOf("MESZ6" to 10, "MESH7" to 1000)) }
     }
 
+    @Test fun nanoSpProductUsesNesDatedContractsForVolumeRanking() = runTest {
+        val wire = Wire()
+        assertEquals("NES", datedContractRoot("NMES"))
+        assertEquals("NNQ", datedContractRoot("nnq"))
+        val leader = selectVolumeLeader(400, datedContractRoot("NMES"), wire.clock,
+            { path ->
+                val result = wire.request(TradovateEnvironment.DEMO.defaultHosts, "test", "GET", path, null) as JsonArray
+                Json.parseToJsonElement(result.toString().replace("MES", "NES")) as JsonArray
+            }, { symbol, _ -> mapOf("NESZ6" to 10L, "NESH7" to 1000L).getValue(symbol) })
+        assertEquals("NESH7", leader.contract.str("name"))
+    }
+
     @Test fun missingDailyVolumeCannotBecomeAZeroVolumeCandidate() = runTest {
         val wire = Wire().apply { missingVolume = true }
         val broker = ready(wire)

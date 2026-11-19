@@ -739,7 +739,10 @@ class RithmicBroker(
             rebuild()
         }
         if (requestedOrderFlow == symbol) syncOrderFlow()
-        if (resolved != null) { refreshQuoteWatch(); watched.filter { it.first == symbol }.forEach(::startWatch) }
+        // This can run inside quoteWatchJob through searchInstruments. Restarting that job here
+        // cancels the search that is resolving the saved symbol, before the rest of its quotes
+        // have been subscribed. Reconcile subscriptions directly instead.
+        if (resolved != null) { syncQuoteSubscriptions(); watched.filter { it.first == symbol }.forEach(::startWatch) }
     }
 
     /** The dated contract the server names for a product on one exchange, with its specification loaded. */

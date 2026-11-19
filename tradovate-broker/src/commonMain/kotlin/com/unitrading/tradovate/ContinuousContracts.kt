@@ -20,6 +20,12 @@ internal data class CompletedSession(
 )
 internal data class VolumeLeader(val contract: JsonObject, val maturity: JsonObject, val session: CompletedSession, val volume: Long)
 
+/** Tradovate's product name for the E-nano S&P can differ from its dated contract root. */
+internal fun datedContractRoot(productRoot: String): String = when (productRoot.uppercase()) {
+    "NMES" -> "NES"
+    else -> productRoot.uppercase()
+}
+
 // Publication gaps are allowed only with fresh daily-history evidence, and never indefinitely.
 private const val MAX_CALENDAR_TAIL_AGE_MS = 72 * 60 * 60 * 1000L
 // A newer session cannot both start and complete between two checks this far apart.
