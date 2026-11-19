@@ -3,6 +3,10 @@ package com.unitrading.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
@@ -12,8 +16,11 @@ import androidx.compose.ui.unit.dp
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.BrokerPlugin
+import com.unitrading.broker.AccountInfo
 import com.unitrading.broker.OrderFlowSnapshot
+import com.unitrading.broker.Side
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import java.io.File
 import javax.imageio.ImageIO
@@ -45,11 +52,25 @@ class DesktopDetachedWorkspaceUiTest {
         onNode(hasTestTag("detached-account-toolbar-c1") and child).assertExists()
         onNode(hasTestTag("quick-login-picker") and child).assertExists()
         onNode(hasTestTag("quick-account-picker") and child).assertExists()
-        onNodeWithText("账户与主窗口同步").assertExists()
+        val bar = onNode(hasTestTag("detached-account-toolbar-c1") and child).fetchSemanticsNode().boundsInRoot
+        val tools = onNode(hasTestTag("chart-toolbar") and child).fetchSemanticsNode().boundsInRoot
+        val accounts = onNode(hasTestTag("desktop-trade-accounts") and child).fetchSemanticsNode().boundsInRoot
+        assertTrue(tools.top >= bar.top && tools.bottom <= bar.bottom + 1f)
+        assertTrue(accounts.top >= bar.top && accounts.bottom <= bar.bottom + 1f && accounts.left >= tools.right - 1f)
         onNode(hasTestTag("market-watch") and child).assertExists()
 
-        onNodeWithTag("detached-rail-order-c1").performScrollTo().performClick()
+        val chart = onNode(hasTestTag("trading-chart") and child)
+        val chartSize = chart.fetchSemanticsNode().size
+        chart.performMouseInput { click(androidx.compose.ui.geometry.Offset(chartSize.width * .7f, chartSize.height * .7f)) }
+        chart.performMouseInput {
+            moveTo(androidx.compose.ui.geometry.Offset(chartSize.width * .7f, chartSize.height * .7f))
+            press(MouseButton.Secondary); release(MouseButton.Secondary)
+        }
+        onNodeWithTag("plot-menu-BUY-MARKET").performClick()
         waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("order-fields") and child).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(source.placed.isEmpty(), "A child chart context menu only opens its own order form")
+
+        onNodeWithTag("detached-rail-order-c1").assertExists()
         onNode(hasText("OTHRZ6", substring = true) and hasAnyAncestor(hasTestTag("detached-side-panel-c1"))).assertExists()
         onNode(hasTestTag("review-order") and child).performClick()
         onNodeWithTag("desktop-order-confirmation").assertExists()
@@ -76,13 +97,13 @@ class DesktopDetachedWorkspaceUiTest {
         assertTrue(source.placed.isEmpty())
     }
 
-    @Test fun detachedAccountAndFlattenControlsUseTheSharedSelectedAccount() = runDesktopComposeUiTest(width = 1600, height = 1000) {
-        val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
-        val broker = runtime.registry.plugins.first()
-        val first = broker.accounts.first()
-        val second = broker.accounts.last()
-        val firstBefore = broker.openSession(first.id).state.value.positions.size
-        val secondBefore = broker.openSession(second.id).state.value.positions.size
+    @Test fun detachedSubaccountStaysIndependentAndTradesItsOwnAccount() = runDesktopComposeUiTest(width = 1600, height = 1000) {
+        val first = AccountInfo("100", "主窗口账户")
+        val second = AccountInfo("200", "子窗口账户")
+        val broker = RiskFixture(children = listOf(first, second))
+        broker.hold(first.id, listOf(riskPosition(Side.BUY, 100, "main-position")))
+        broker.hold(second.id, listOf(riskPosition(Side.BUY, 100, "child-position")))
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
         val windows = FakePanelWindows(strip = 760.dp)
         setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.DESKTOP,
             LocalPanelWindowHost provides windows) {
@@ -93,8 +114,13 @@ class DesktopDetachedWorkspaceUiTest {
         onNodeWithTag("detach-workspace-c1").performClick()
         waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open }
         val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
+        val main = hasAnyAncestor(hasTestTag("app-toolbar"))
+        onNode(hasTestTag("quick-login-picker") and child).assertIsNotEnabled()
         onNode(hasTestTag("quick-account-picker") and child).performClick()
+        onNodeWithTag("rename-account-${second.id}").assertDoesNotExist()
         onNodeWithTag("quick-account-${second.id}").performClick()
+        onNode(hasTestTag("quick-account-picker") and child).assertTextContains("子窗口账户", substring = true)
+        onNode(hasTestTag("quick-account-picker") and main).assertTextContains("主窗口账户", substring = true)
         onNode(hasTestTag("flatten-selected-account") and child).assertIsEnabled().performMouseInput { click() }
         onNodeWithText("平仓此子账户？").assertExists()
         onNodeWithText(second.id, substring = true).assertExists()
@@ -102,7 +128,83 @@ class DesktopDetachedWorkspaceUiTest {
         onNode(hasTestTag("flatten-all-accounts") and child).performMouseInput { click() }
         onNodeWithText("平仓全部子账户？").assertExists()
         onNodeWithTag("cancel-bulk-flatten").performClick()
-        assertEquals(firstBefore, broker.openSession(first.id).state.value.positions.size)
-        assertEquals(secondBefore, broker.openSession(second.id).state.value.positions.size)
+        onNodeWithTag("detached-rail-terminal-c1").performScrollTo().performClick()
+        onNode(hasTestTag("position-child-position") and child).assertExists()
+        onNode(hasTestTag("position-main-position") and child).assertDoesNotExist()
+        onNodeWithTag("detached-rail-order-c1").performScrollTo().performClick()
+        onNode(hasTestTag("review-order") and child).performClick()
+        onNode(hasText("子窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
+        onNodeWithTag("confirm-action").performClick()
+        waitUntil(timeoutMillis = 5_000) { "place:200" in broker.events }
+        onNodeWithTag("workspace-tab-main").performClick()
+        onNode(hasTestTag("quick-account-picker") and main).assertTextContains("主窗口账户", substring = true)
+        onNode(hasTestTag("quick-account-picker") and child).assertTextContains("子窗口账户", substring = true)
+        assertEquals(1, broker.openSession(first.id).state.value.positions.size)
+        assertEquals(1, broker.openSession(second.id).state.value.positions.size)
+        runOnIdle { broker.catalog.value = broker.catalog.value.copy(accounts = listOf(first)) }
+        onNode(hasTestTag("quick-account-picker") and child).assertTextContains("选择子账户", substring = true)
+        onNode(hasTestTag("flatten-selected-account") and child).assertIsNotEnabled()
+        onNode(hasText("子账户不可用，请在此窗口重新选择子账户") and child).assertExists()
+        assertEquals(listOf("place:200"), broker.events.filter { it.startsWith("place:") })
+    }
+
+    @Test fun detachedSubaccountRestoresWithoutChangingTheMainAccount() = runDesktopComposeUiTest(width = 1600, height = 1000) {
+        val store = MemorySnapshotStore()
+        val broker = RiskFixture(children = listOf(AccountInfo("100", "主窗口账户"), AccountInfo("200", "子窗口账户")))
+        fun runtime() = TradingRuntime(store, listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+        var current by mutableStateOf(runtime())
+        var windows by mutableStateOf(FakePanelWindows(strip = 760.dp))
+        setContent {
+            val app = current; val host = windows
+            key(app, host) {
+                CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.DESKTOP,
+                    LocalPanelWindowHost provides host) {
+                    Box(Modifier.requiredSize(1600.dp, 1000.dp)) { TradingScreen(app) }
+                }
+            }
+        }
+        onNodeWithTag("chart-new-workspace").performClick()
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag("detach-workspace-c1").performClick()
+        waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open }
+        val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
+        val main = hasAnyAncestor(hasTestTag("app-toolbar"))
+        onNode(hasTestTag("quick-account-picker") and child).performClick()
+        onNodeWithTag("quick-account-200").performClick()
+        waitUntil(timeoutMillis = 10_000) { current.workspaceAccounts.selections.value[broker.descriptor.id]?.get("c1") == "200" }
+        assertTrue(runBlocking { current.desktopWorkspaceSaver!!.invoke() })
+        runOnIdle { windows = FakePanelWindows(strip = 760.dp); current = runtime() }
+        waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open }
+        onNode(hasTestTag("quick-account-picker") and child).assertTextContains("子窗口账户", substring = true)
+        onNode(hasTestTag("quick-account-picker") and main).assertTextContains("主窗口账户", substring = true)
+        onNode(hasTestTag("quick-login-picker") and child).assertIsNotEnabled()
+    }
+
+    @Test fun mainWindowAloneChangesTheSharedLogin() = runDesktopComposeUiTest(width = 1600, height = 1000) {
+        val first = RiskFixture(login = "first-login", children = listOf(AccountInfo("100", "主账户一")))
+        val second = RiskFixture(login = "second-login", children = listOf(AccountInfo("300", "主账户二")))
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(first, second), includeDemoBrokers = false).apply { paused.value = true }
+        runBlocking {
+            assertTrue(runtime.accountAliases.setLogin(first.descriptor.id, "平台甲"))
+            assertTrue(runtime.accountAliases.setLogin(second.descriptor.id, "平台乙"))
+        }
+        val windows = FakePanelWindows(strip = 760.dp)
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.DESKTOP,
+            LocalPanelWindowHost provides windows) { Box(Modifier.requiredSize(1600.dp, 1000.dp)) { TradingScreen(runtime) } } }
+        onNodeWithTag("chart-new-workspace").performClick()
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag("detach-workspace-c1").performClick()
+        waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open && "c1" in runtime.chartPreferences.preferences.value.detachedWorkspaces }
+        val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
+        val main = hasAnyAncestor(hasTestTag("app-toolbar"))
+        onNode(hasTestTag("quick-login-picker") and child).assertIsNotEnabled().assertTextContains("平台甲", substring = true)
+        onNode(hasTestTag("quick-login-picker") and main).performClick()
+        onNodeWithTag("quick-login-second-login").performClick()
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodes(hasTestTag("quick-login-picker") and hasText("平台乙", substring = true) and child).fetchSemanticsNodes().isNotEmpty()
+        }
+        onNode(hasTestTag("quick-login-picker") and child).assertIsNotEnabled().assertTextContains("平台乙", substring = true)
+        onNode(hasTestTag("quick-account-picker") and child).performClick()
+        onNodeWithTag("rename-account-300").assertDoesNotExist()
     }
 }

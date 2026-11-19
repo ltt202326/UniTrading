@@ -26,11 +26,13 @@ internal fun DetachedWorkspace(
     terminal: @Composable (Modifier) -> Unit,
     terminalSummary: String,
     dom: (@Composable (Modifier, close: () -> Unit) -> Unit)?,
+    orderRequest: Int,
     onDomOpenChange: (Boolean) -> Unit,
     onActivate: () -> Unit,
 ) {
     var side by remember(id) { mutableStateOf<DetachedSidePanel?>(DetachedSidePanel.MARKET) }
     var tradeOpen by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(orderRequest) { if (orderRequest > 0) side = DetachedSidePanel.ORDER }
     val latestDomChange by rememberUpdatedState(onDomOpenChange)
     LaunchedEffect(side) { latestDomChange(side == DetachedSidePanel.DOM) }
     DisposableEffect(id) { onDispose { latestDomChange(false) } }
