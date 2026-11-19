@@ -132,7 +132,15 @@ class DesktopDetachedWorkspaceUiTest {
         onNodeWithTag("detached-rail-terminal-c1").performScrollTo().performClick()
         onNode(hasTestTag("position-child-position") and child).assertExists()
         onNode(hasTestTag("position-main-position") and child).assertDoesNotExist()
-        onNodeWithTag("detached-rail-order-c1").performScrollTo().performClick()
+        val childChart = onNode(hasTestTag("trading-chart") and child)
+        val childSize = childChart.fetchSemanticsNode().size
+        childChart.performMouseInput {
+            moveTo(androidx.compose.ui.geometry.Offset(childSize.width * .70f, childSize.height * .70f))
+            press(MouseButton.Secondary); release(MouseButton.Secondary)
+        }
+        onNodeWithTag("plot-menu-BUY-MARKET").performClick()
+        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("review-order") and child).fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(broker.events.none { it.startsWith("place:") }, "A chart menu must not place an order")
         onNode(hasTestTag("review-order") and child).performClick()
         onNode(hasText("子窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
         onNode(hasTestTag("quick-account-picker") and child).assertIsNotEnabled()
@@ -143,6 +151,7 @@ class DesktopDetachedWorkspaceUiTest {
         onNode(hasTestTag("quick-account-picker") and main).assertTextContains("主窗口账户", substring = true)
         onNode(hasTestTag("quick-account-picker") and child).assertTextContains("子窗口账户", substring = true)
         onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("desktop-order"))).performClick()
+        onNodeWithTag("desktop-order-confirmation").assertExists()
         onNode(hasText("主窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
         onNodeWithTag("confirm-action").performClick()
         waitUntil(timeoutMillis = 5_000) { "place:100" in broker.events }
@@ -153,6 +162,34 @@ class DesktopDetachedWorkspaceUiTest {
         onNode(hasTestTag("flatten-selected-account") and child).assertIsNotEnabled()
         onNode(hasText("子账户不可用，请在此窗口重新选择子账户") and child).assertExists()
         assertEquals(listOf("place:200", "place:100"), broker.events.filter { it.startsWith("place:") })
+    }
+
+    @Test fun pendingChildProtectionPreventsEitherWindowFromChangingItsAccount() = runDesktopComposeUiTest(width = 1600, height = 1000) {
+        val broker = RiskFixture(children = listOf(AccountInfo("100", "主窗口账户"), AccountInfo("200", "子窗口账户")))
+        broker.hold("200", listOf(riskPosition(Side.BUY, 100, "child-position")))
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+        val windows = FakePanelWindows(strip = 760.dp)
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.DESKTOP,
+            LocalPanelWindowHost provides windows) {
+            Box(Modifier.requiredSize(1600.dp, 1000.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-new-workspace").performClick()
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag("detach-workspace-c1").performClick()
+        waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open }
+        val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
+        val main = hasAnyAncestor(hasTestTag("app-toolbar"))
+        onNode(hasTestTag("quick-account-picker") and child).performClick()
+        onNodeWithTag("quick-account-200").performClick()
+        onNodeWithTag("detached-rail-terminal-c1").performScrollTo().performClick()
+        onNode(hasTestTag("protect-position-child-position") and child).performClick()
+        onNodeWithTag("protection-dialog").assertExists()
+        onNode(hasTestTag("quick-account-picker") and child).assertIsNotEnabled()
+        onNode(hasTestTag("quick-account-picker") and main).assertIsNotEnabled()
+        onNode(hasText("取消") and hasAnyAncestor(hasTestTag("protection-dialog"))).performClick()
+        onNode(hasTestTag("quick-account-picker") and child).assertIsEnabled()
+        onNode(hasTestTag("quick-account-picker") and main).assertIsEnabled()
+        assertTrue(broker.events.none { it.startsWith("protect:") }, "Opening and cancelling an edit must not send a broker command")
     }
 
     @Test fun detachedSubaccountRestoresWithoutChangingTheMainAccount() = runDesktopComposeUiTest(width = 1600, height = 1000) {

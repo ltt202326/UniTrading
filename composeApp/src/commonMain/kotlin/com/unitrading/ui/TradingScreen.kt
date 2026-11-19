@@ -357,6 +357,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var flattenReview by remember { mutableStateOf<FlattenReview?>(null) }
         var flattenResults by remember { mutableStateOf<List<FlattenOutcome>?>(null) }
         var flattening by remember { mutableStateOf(false) }
+        // A detached window must not change the account behind another window's pending order or edit.
+        fun accountOperationPending() = busy || confirmation != null || flattenReview != null || flattening || flattenResults != null ||
+            protection != null || pendingEdit != null || pendingProtection != null || standaloneEdit != null
         /** The window the user last worked in: null for the main window, else the key of a window that holds part of the workspace. */
         var activeWindow by remember { mutableStateOf<String?>(null) }
         val liveWindows = remember { mutableStateListOf<String>() }
@@ -554,6 +557,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val replacement = continuousChart(symbol).takeIf { restoring == null && !instrument.isContinuous && symbol !in watchSymbols }
         LaunchedEffect(replacement) { replacement?.let(::showSymbol) }
         fun chooseSymbol(value: String) {
+            if (accountOperationPending()) return
             showSymbol(value)
             focusedTrade = null
             focusedExecution = null
@@ -567,7 +571,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         /** Makes [id] the chart the screen works on. It trades places with the active chart; each keeps its symbol and interval. */
         fun activateChart(id: String) {
-            if (id != activeChart && (busy || confirmation != null || flattenReview != null || flattening || flattenResults != null)) return
+            if (id != activeChart && accountOperationPending()) return
             workspaceSelected[workspaceOf(id)] = id
             if (id == activeChart) return
             val target = parkedCharts[id] ?: return
@@ -584,7 +588,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         /** Opens one more chart window, on the symbol and interval of the chart being worked on. */
         fun openChart(detached: Boolean = false) {
-            if (chartOpening) return
+            if (chartOpening || accountOperationPending()) return
             if (chartOrder.size >= ChartPreferences.MAX_EXTRA_CHARTS) { showNotice("最多同时打开 ${ChartPreferences.MAX_EXTRA_CHARTS} 个图表窗口", attention = true); return }
             val id = generateSequence(1) { it + 1 }.map { "c$it" }.first { it !in chartOrder }
             val sourceId = activeChart
@@ -610,6 +614,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             }
         }
         fun selectSplitLayout(workspace: String, layout: ChartSplitLayout) {
+            if (accountOperationPending()) return
             val ids = (0 until layout.count).map { cellId(workspace, it) }
             if ((workspaceSelected[workspace] ?: workspace) !in ids) workspaceSelected[workspace] = workspace
             if (workspaceOf(activeChart) == workspace && activeChart !in ids) activateChart(workspace)
@@ -625,13 +630,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             workspaceOrder = workspaceOrder.map { if (it in detachedWorkspaces) it else reordered.next() }
         }
         fun selectWorkspace(id: String) {
-            if (busy || confirmation != null || flattenReview != null || flattening || flattenResults != null) return
+            if (accountOperationPending()) return
             if (id in detachedWorkspaces) return
+            activeWindow = null
             selectedWorkspace = id
             activateChart(workspaceSelected[id] ?: id)
         }
         fun detachWorkspace(id: String) {
-            if (busy || confirmation != null || flattenReview != null || flattening || flattenResults != null) return
+            if (accountOperationPending()) return
             if (id in detachedWorkspaces) return
             val remaining = (listOf(MAIN_CHART) + chartOrder).filter { it != id && it !in detachedWorkspaces }
             if (remaining.isEmpty()) { showNotice("请先新建一个布局，再拖出当前布局", attention = true); return }
@@ -641,7 +647,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             if (selectedWorkspace == id) selectWorkspace(remaining.first())
         }
         fun dockWorkspace(id: String) {
-            if (busy || confirmation != null || flattenReview != null || flattening || flattenResults != null) return
+            if (accountOperationPending()) return
             detachedWorkspaces = detachedWorkspaces - id
             detachedAccounts.remove(id)
             unresolvedDetachedAccounts.remove(id)
@@ -650,7 +656,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             activateChart(workspaceSelected[id] ?: id)
         }
         fun closeChart(id: String) {
-            if (busy || confirmation != null || flattenReview != null || flattening || flattenResults != null) return
+            if (accountOperationPending()) return
             if (id == MAIN_CHART) return
             val fallback = (listOf(MAIN_CHART) + chartOrder).firstOrNull { it != id && it !in detachedWorkspaces } ?: MAIN_CHART
             if (workspaceOf(activeChart) == id) activateChart(fallback)
@@ -680,12 +686,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             showOrder = false; showDraft = false; orderPanelState = MobileOrderPanelState.CLOSED
         }
         fun chooseBroker(value: String) {
-            if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null && value != plugin.descriptor.id) {
+            if (!accountOperationPending() && value != plugin.descriptor.id) {
                 clearAccountEditors(); selectBroker(value)
             }
         }
         fun chooseAccount(value: String) {
-            if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null && catalog.accounts.any { it.id == value }) {
+            if (!accountOperationPending() && catalog.accounts.any { it.id == value }) {
                 if (value != mainAccountId) clearAccountEditors()
                 manuallySelected = true
                 chosenAccountId = value
@@ -693,7 +699,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             }
         }
         fun chooseDetachedAccount(workspace: String, value: String) {
-            if (busy || confirmation != null || flattenReview != null || flattening || flattenResults != null ||
+            if (accountOperationPending() ||
                 workspace !in detachedWorkspaces || catalog.accounts.none { it.id == value } ||
                 (plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()) !== plugin) return
             if ((detachedAccounts[workspace] ?: mainAccountId) != value) clearAccountEditors()
@@ -719,8 +725,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             else value
             showDraft = true
         }
-        fun perform(onAccepted: () -> Unit = {}, action: suspend () -> TradeResult) {
+        fun perform(onAccepted: () -> Unit = {}, requireCurrentAccount: Boolean = true, action: suspend () -> TradeResult) {
             if (busy) return
+            if (requireCurrentAccount && !accountContextCurrent()) {
+                showNotice("账户已切换，请重新检查后操作", attention = true)
+                return
+            }
             busy = true
             val origin = accountName
             scope.launch {
@@ -1001,7 +1011,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                             perform { session.cancelOrder(requestId(), current.id) }
                         }
-                        Confirmation.Reset -> perform { runtime.resetAll(); TradeResult(true, "已重置全部本地模拟数据") }
+                        Confirmation.Reset -> perform(requireCurrentAccount = false) { runtime.resetAll(); TradeResult(true, "已重置全部本地模拟数据") }
                     }
                 }
                 fun reviewTrade(action: Confirmation) {
@@ -1710,7 +1720,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 return currentBroker === plugin && current == selectedId && catalog.accounts.any { it.id == selectedId }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                val accountActionsReady = !busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null
+                                val accountActionsReady = !accountOperationPending()
                                 // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
                                 Row(Modifier.testTag("desktop-flatten-actions"), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1721,7 +1731,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     val shape = RoundedCornerShape(7.dp)
                                     val outline = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                     OutlinedButton(onClick = {
-                                        if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null &&
+                                        if (!accountOperationPending() &&
                                             targetSession != null && selectionStillCurrent())
                                             flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, targetSession.account)))
                                     },
@@ -1732,7 +1742,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         Text("平仓此子账户", maxLines = 1)
                                     }
                                     OutlinedButton(onClick = {
-                                        if (!busy && confirmation == null && flattenReview == null && !flattening && flattenResults == null && selectionStillCurrent()) {
+                                        if (!accountOperationPending() && selectionStillCurrent()) {
                                             val (targets, skipped) = bulkFlattenTargets(registry.plugins)
                                             if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
                                         }
@@ -1824,8 +1834,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             return activeChart == target && restoring == null && chosenSymbol == symbol && accountContextCurrent()
                         }
                         fun workInWorkspace(target: String, action: () -> Unit) {
-                            if (confirmation != null || flattenReview != null || flattening || flattenResults != null) return
+                            if (accountOperationPending()) return
                             if (!readyForWorkspace(target)) { activateChart(target); return }
+                            activeWindow = workspaceOf(target).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
                             action()
                         }
                         @Composable fun workspaceOrder(target: String, m: Modifier, minimize: () -> Unit) {
