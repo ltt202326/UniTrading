@@ -1,4 +1,4 @@
-name: Desktop windows and nano contracts
+name: Desktop account routing and nano contracts
 on:
   push:
     branches: ['build/detached-account-20261119']
