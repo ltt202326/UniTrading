@@ -711,6 +711,7 @@ class ContinuousContractsTest {
         val wire = Wire()
         assertEquals("NES", datedContractRoot("NMES"))
         assertEquals("NNQ", datedContractRoot("nnq"))
+        assertTrue(usesVerifiedContractChart("@NMES"))
         val leader = selectVolumeLeader(400, datedContractRoot("NMES"), wire.clock,
             { path ->
                 val result = wire.request(TradovateEnvironment.DEMO.defaultHosts, "test", "GET", path, null) as JsonArray
