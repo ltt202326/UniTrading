@@ -1,7 +1,7 @@
 name: Side order panel and cross-platform regression
 on:
   push:
-    branches: ['build/codex-window-completion-20261119']
+    branches: ['build/codex-window-sidebar-exit-20261120']
 permissions:
   contents: read
 jobs:
@@ -27,6 +27,7 @@ jobs:
             --tests '*DesktopDetachedWorkspaceUiTest*'
             --tests '*ChartContextOrderPlatformsTest*'
             --tests '*WorkspaceAccountsTest*'
+            --tests '*DesktopWorkspaceSessionStoreTest*'
             --tests '*DesktopWorkspaceTabsUiTest.windowsTitleTabsRespondToMouseAfterQuotesUpdate*'
             --tests '*DesktopWorkspaceTabsUiTest.restoredWindowsTitleUpdatesAllQuotesWithoutSelectingEachTab*'
             --tests '*WorkspaceTabDataTest*' )

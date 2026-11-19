@@ -51,6 +51,8 @@ class DesktopDetachedWorkspaceUiTest {
         waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open }
         val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
         onNode(hasTestTag("detached-account-toolbar-c1") and child).assertExists()
+        onNode(hasTestTag("detached-account-strip-c1") and child).assertExists()
+        onNode(hasTestTag("chart-new-workspace") and child).assertDoesNotExist()
         onNode(hasTestTag("quick-login-picker") and child).assertExists()
         onNode(hasTestTag("quick-account-picker") and child).assertExists()
         val bar = onNode(hasTestTag("detached-account-toolbar-c1") and child).fetchSemanticsNode().boundsInRoot

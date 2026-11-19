@@ -60,7 +60,7 @@ class DesktopWorkspaceTabsUiTest {
     @Test fun tabsKeepIndependentLayoutsCanDetachAndRestoreOnRestart() {
         render()
         compose.onNodeWithTag("rail-windows").assertDoesNotExist()
-        compose.onNodeWithTag("rail-new-chart").assertExists()
+        compose.onNodeWithTag("rail-new-chart").assertDoesNotExist()
         addTab()
         assertEquals(2, runtime.desktopWorkspaceCount.value)
         layout("TWO_COLUMNS")
@@ -101,10 +101,10 @@ class DesktopWorkspaceTabsUiTest {
     }
     @Test fun rightNewWindowRemainsAndResetNeedsConfirmation() {
         render()
-        compose.onNodeWithTag("rail-new-chart").performScrollTo().performClick()
+        compose.onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
-        assertTrue("chart-c1" !in windows.open, "The rail button creates a tab rather than a detached window")
-        compose.onNodeWithTag("chart-new-workspace").assertTextContains("新建窗口", substring = true)
+        assertTrue("chart-c1" !in windows.open, "The add button creates a tab rather than a detached window")
+        compose.onNodeWithTag("chart-new-workspace").assertExists()
         compose.waitForIdle()
         compose.runOnIdle { runtime.desktopLayout.update(runtime.desktopLayout.preferences.value.copy(sidebarWidth = 410f)) }
         compose.onNodeWithTag("reset-desktop-layout").performClick()

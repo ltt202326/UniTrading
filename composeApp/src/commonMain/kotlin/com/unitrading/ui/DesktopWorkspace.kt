@@ -185,8 +185,6 @@ internal fun DesktopWorkspace(
                     if (wide || WorkspacePanel.ORDER in detached) RailToggle(AppIcons.OrderEntry, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
                     RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
                     if (analytics != null) RailToggle(AppIcons.Analytics, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
-                    if (onNewChartWindow != null)
-                        RailToggle(AppIcons.AddWindow, "新建窗口", "rail-new-chart", false, enabled = newChartWindowEnabled, onToggle = onNewChartWindow)
                     if (onOpenSettings != null)
                         RailToggle(AppIcons.Settings, "设置", "open-settings", false, onToggle = onOpenSettings)
                     if (orderFlow != null) RailToggle(if (flowOpen) AppIcons.CandlestickFilled else AppIcons.Candlestick, "订单流", "rail-order-flow", flowOpen) {
