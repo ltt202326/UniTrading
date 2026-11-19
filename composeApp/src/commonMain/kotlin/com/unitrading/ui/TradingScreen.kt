@@ -1582,8 +1582,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // A dialog stays in the window it opened in; notices follow the user from window to window. A window that
                 // has gone hands both back to the main one.
                 // Read as state where a window draws its overlay: that content belongs to another composition than this one.
-                val dialogWindow by rememberUpdatedState(remember(dialogsOpen) { activeWindow }.takeIf { it in liveWindows })
-                val noticeWindow by rememberUpdatedState(activeWindow.takeIf { it in liveWindows })
+                val dialogWindow = rememberUpdatedState(remember(dialogsOpen) { activeWindow }.takeIf { it in liveWindows })
+                val noticeWindow = rememberUpdatedState(activeWindow.takeIf { it in liveWindows })
+                val latestTradeDialogs = rememberUpdatedState(tradeDialogs)
                 val mainFocused = LocalWindowInfo.current.isWindowFocused
                 LaunchedEffect(mainFocused) {
                     if (mainFocused) {
@@ -1599,8 +1600,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onDispose { liveWindows -= window; if (activeWindow == window) activeWindow = null }
                     }
                     Box(Modifier.fillMaxSize()) {
-                        if (noticeWindow == window) notices(12.dp, Dp.Unspecified, true)
-                        if (dialogWindow == window) tradeDialogs()
+                        if (noticeWindow.value == window) notices(12.dp, Dp.Unspecified, true)
+                        if (dialogWindow.value == window) latestTradeDialogs.value()
                     }
                 }
                 // Overview, positions and orders, and analytics of the trading child: a tab on phones, a dialog on the desktop.
@@ -2171,7 +2172,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                 }
                 }
-                if (noticeWindow == null) notices(if (desktop) 72.dp else if (keyboardOpen) 8.dp else 56.dp, observedHeight * .65f, desktop)
+                if (noticeWindow.value == null) notices(if (desktop) 72.dp else if (keyboardOpen) 8.dp else 56.dp, observedHeight * .65f, desktop)
                 if (desktop && showOverview) {
                     Dialog(onDismissRequest = { showOverview = false }) {
                         Surface(Modifier.widthIn(max = 720.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Shell) {
@@ -2193,7 +2194,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                 }
-                if (dialogWindow == null) tradeDialogs()
+                if (dialogWindow.value == null) tradeDialogs()
                 if (startupError != null && confirmation !is Confirmation.Reset) AlertDialog(
                     onDismissRequest = {}, title = { Text("模拟存档无法读取") },
                     text = { Text(startupError!! + "\n请先备份原文件。继续重置会覆盖所有模拟账户。") },

@@ -1,4 +1,4 @@
-name: Desktop account routing and cross-platform packages
+name: Workspace dialog routing and cross-platform packages
 on:
   push:
     branches: ['build/codex-window-completion-20261119']
