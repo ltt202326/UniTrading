@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
@@ -14,6 +15,8 @@ import com.unitrading.broker.BrokerPlugin
 import com.unitrading.broker.OrderFlowSnapshot
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Test
+import java.io.File
+import javax.imageio.ImageIO
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -62,6 +65,8 @@ class DesktopDetachedWorkspaceUiTest {
         onNode(hasTestTag("desktop-trade-tab-ORDERS") and child).assertExists()
         onNode(hasTestTag("desktop-trade-tab-EXECUTIONS") and child).assertExists()
         onNode(hasTestTag("desktop-trade-tab-CLOSED_TRADES") and child).assertExists()
+        val screenshot = File("../artifacts/detached-workspace/detached-workspace.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(onNodeWithTag("fake-window-chart-c1").captureToImage().toAwtImage(), "png", screenshot)
         assertTrue(source.placed.isEmpty())
     }
 

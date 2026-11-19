@@ -293,41 +293,40 @@ class ContinuousContractsTest {
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
     }
 
-    @Test fun nanoChartsUseOnlyTheirOwnVerifiedQuarterlyContractsAndFollowRolls() = runTest {
-        for (root in listOf("NNQ", "NES")) {
-            val wire = Wire(root = root)
-            val broker = ready(wire)
-            val alias = "@$root"
-            assertEquals("${root}Z6", broker.instruments.single { it.symbol == alias }.executionSymbol)
-            assertEquals(setOf("${root}Z6", "${root}H7"), wire.dailyRequests.mapNotNull { it.str("symbol") }.toSet())
-            assertTrue(wire.chartRequests.any { it.str("symbol") == "${root}Z6" })
-            assertTrue(wire.chartRequests.none { it.str("symbol") == alias })
-            assertTrue(broker.history(alias, Timeframe.M5).isNotEmpty())
+    private suspend fun TestScope.checkNanoChartRoll(root: String) {
+        val wire = Wire(root = root)
+        val broker = ready(wire)
+        val alias = "@$root"
+        assertEquals("${root}Z6", broker.instruments.single { it.symbol == alias }.executionSymbol)
+        assertEquals(setOf("${root}Z6", "${root}H7"), wire.dailyRequests.mapNotNull { it.str("symbol") }.toSet())
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "${root}Z6" })
+        assertTrue(wire.chartRequests.none { it.str("symbol") == alias })
+        assertTrue(broker.history(alias, Timeframe.M5).isNotEmpty())
 
-            wire.leader = "${root}H7"
-            wire.clock += 86_400_000
-            broker.refreshContinuous(alias, force = true)
-            runCurrent()
-            assertEquals("${root}H7", broker.instruments.single { it.symbol == alias }.executionSymbol)
-            assertTrue(wire.chartRequests.any { it.str("symbol") == "${root}H7" })
-            assertTrue(wire.chartRequests.none { it.str("symbol") == alias })
-            assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
-            broker.disconnect()
-        }
+        wire.leader = "${root}H7"
+        wire.clock += 86_400_000
+        broker.refreshContinuous(alias, force = true)
+        runCurrent()
+        assertEquals("${root}H7", broker.instruments.single { it.symbol == alias }.executionSymbol)
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "${root}H7" })
+        assertTrue(wire.chartRequests.none { it.str("symbol") == alias })
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
     }
 
-    @Test fun nanoChartsDoNotUseAnAliasOrOldMonthWhileLeaderIsUnconfirmed() = runTest {
-        for (root in listOf("NNQ", "NES")) {
-            val wire = Wire(root = root).apply { failMapping = true }
-            val broker = ready(wire)
-            val alias = "@$root"
-            assertNull(broker.instruments.single { it.symbol == alias }.executionSymbol)
-            assertTrue(broker.history(alias, Timeframe.M5).isEmpty())
-            assertTrue(wire.chartRequests.none { it.str("symbol") in setOf(alias, "${root}Z6", "${root}H7") })
-            assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
-            broker.disconnect()
-        }
+    @Test fun nnqChartUsesItsVerifiedQuarterlyContractsAndFollowsRoll() = runTest { checkNanoChartRoll("NNQ") }
+    @Test fun nesChartUsesItsVerifiedQuarterlyContractsAndFollowsRoll() = runTest { checkNanoChartRoll("NES") }
+
+    private suspend fun TestScope.checkNanoChartUnconfirmed(root: String) {
+        val wire = Wire(root = root).apply { failMapping = true }
+        val broker = ready(wire)
+        val alias = "@$root"
+        assertNull(broker.instruments.single { it.symbol == alias }.executionSymbol)
+        assertTrue(broker.history(alias, Timeframe.M5).isEmpty())
+        assertTrue(wire.chartRequests.none { it.str("symbol") in setOf(alias, "${root}Z6", "${root}H7") })
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
     }
+    @Test fun nnqChartHidesUnconfirmedContracts() = runTest { checkNanoChartUnconfirmed("NNQ") }
+    @Test fun nesChartHidesUnconfirmedContracts() = runTest { checkNanoChartUnconfirmed("NES") }
 
     @Test fun liveContinuousChartIsNotRestartedWhileItsOwnBarsArrive() = runTest {
         val wire = Wire()

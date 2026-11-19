@@ -1735,7 +1735,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     section = section.takeIf { desktopStyle }, historyTrades = if (desktopStyle) analyticsTrades else account.trades)
                             }
                         }
-                        val mainTarget = workspaceSelected[selectedWorkspace] ?: selectedWorkspace
+                        val mainWorkspace = if (chartWindowsShown) selectedWorkspace else MAIN_CHART
+                        val mainTarget = workspaceSelected[mainWorkspace] ?: mainWorkspace
                         val mainSlot = chartSlot(mainTarget)
                         val mainInstrument = catalog.instruments.firstOrNull { it.symbol == mainSlot?.symbol }
                         DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
