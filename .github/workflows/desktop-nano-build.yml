@@ -25,6 +25,7 @@ jobs:
           xvfb-run -a ./gradlew :composeApp:desktopTest
           --tests '*DesktopDetachedWorkspaceUiTest*'
           --tests '*DesktopWorkspaceTabsUiTest.windowsTitleTabsRespondToMouseAfterQuotesUpdate*'
+          --tests '*DesktopWorkspaceTabsUiTest.restoredWindowsTitleUpdatesAllQuotesWithoutSelectingEachTab*'
           --no-daemon
       - name: Preserve detached-window test results
         run: |

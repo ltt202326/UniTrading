@@ -237,6 +237,20 @@ class DesktopWorkspaceTabsUiTest {
             compose.onNodeWithTag("workspace-change-main", useUnmergedTree = true).assertTextContains("−0.90%", substring = true)
             compose.onNodeWithTag("workspace-price-c1", useUnmergedTree = true).assertTextEquals("7,010.00")
             compose.onNodeWithTag("workspace-change-c1", useUnmergedTree = true).assertTextContains("+0.14%", substring = true)
+            val restored = compose.onNodeWithTag("workspace-tab-c1")
+            val size = restored.fetchSemanticsNode().size
+            restored.performMouseInput { moveTo(Offset(size.width * .15f, size.height * .5f)); press() }
+            compose.runOnIdle {
+                broker.market.value = broker.market.value.copy(revision = 8,
+                    quotes = broker.market.value.quotes.mapValues { (_, q) -> q.copy(lastTrade = q.lastTrade?.plus(100)) })
+            }
+            restored.performMouseInput { release() }
+            compose.onNodeWithTag("chart-symbol").assertTextContains("OTHRZ6", substring = true)
+            compose.onNodeWithTag("detach-workspace-c1").performMouseInput { click() }
+            compose.waitUntil(10_000) { "chart-c1" in windows.open }
+            compose.onNodeWithTag("dock-workspace-c1").performClick()
+            compose.onNodeWithTag("close-workspace-c1").performMouseInput { click() }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isEmpty() }
         } finally { compose.runOnIdle { frame.dispose() } }
     }
 
@@ -259,15 +273,20 @@ class DesktopWorkspaceTabsUiTest {
             compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
             compose.onNodeWithTag("chart-new-workspace").performClick()
             compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c2").fetchSemanticsNodes().isNotEmpty() }
-            compose.runOnIdle {
+            var revision = 8L
+            fun quoteTick() = compose.runOnIdle {
+                revision++
                 broker.market.value = broker.market.value.copy(quotes = broker.market.value.quotes.mapValues { (_, q) ->
-                    q.copy(lastTrade = 550000, settlement = 555000)
-                }, revision = 8)
+                    q.copy(lastTrade = 550000 + revision, settlement = 555000)
+                }, revision = revision)
             }
+            quoteTick()
             fun clickTab(id: String) {
                 val tab = compose.onNodeWithTag("workspace-tab-$id")
                 val size = tab.fetchSemanticsNode().size
-                tab.performMouseInput { click(Offset(size.width * .15f, size.height * .5f)) }
+                tab.performMouseInput { moveTo(Offset(size.width * .15f, size.height * .5f)); press() }
+                quoteTick()
+                tab.performMouseInput { release() }
                 compose.waitForIdle()
             }
             fun left(id: String) = compose.onNodeWithTag("workspace-tab-$id").fetchSemanticsNode().boundsInRoot.left
@@ -281,15 +300,23 @@ class DesktopWorkspaceTabsUiTest {
             val delta = to.center.x - from.center.x - 20f
             source.performMouseInput {
                 val start = Offset(from.width * .35f, from.height * .5f)
-                moveTo(start); press(); moveTo(start + Offset(delta * .5f, 0f)); moveTo(start + Offset(delta, 0f)); release()
+                moveTo(start); press(); moveTo(start + Offset(delta * .5f, 0f))
             }
+            quoteTick()
+            source.performMouseInput { moveBy(Offset(delta * .5f, 0f)); release() }
             compose.waitForIdle()
             assertTrue(left("c2") < left("main"), "Dragging a Windows title tab changes its order")
-            compose.onNodeWithTag("detach-workspace-c1").performMouseInput { click() }
+            val detach = compose.onNodeWithTag("detach-workspace-c1")
+            detach.performMouseInput { moveTo(center); press() }
+            quoteTick()
+            detach.performMouseInput { release() }
             compose.waitUntil(10_000) { "chart-c1" in windows.open }
             compose.onNodeWithTag("dock-workspace-c1").performClick()
             compose.waitUntil(10_000) { "chart-c1" !in windows.open }
-            compose.onNodeWithTag("close-workspace-c1").performMouseInput { click() }
+            val close = compose.onNodeWithTag("close-workspace-c1")
+            close.performMouseInput { moveTo(center); press() }
+            quoteTick()
+            close.performMouseInput { release() }
             compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isEmpty() }
             assertEquals(2, runtime.desktopWorkspaceCount.value)
             assertTrue(broker.placed.isEmpty())
