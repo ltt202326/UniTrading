@@ -1,4 +1,4 @@
-name: Workspace regression and cross-platform packages
+name: Workspace account and cross-platform regression
 on:
   push:
     branches: ['build/codex-window-completion-20261119']

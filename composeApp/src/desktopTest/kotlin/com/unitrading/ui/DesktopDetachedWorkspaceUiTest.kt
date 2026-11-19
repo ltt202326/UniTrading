@@ -167,6 +167,7 @@ class DesktopDetachedWorkspaceUiTest {
         runOnIdle { broker.catalog.value = broker.catalog.value.copy(accounts = listOf(first)) }
         onNode(hasTestTag("quick-account-picker") and child).assertTextContains("选择子账户", substring = true)
         onNode(hasTestTag("flatten-selected-account") and child).assertIsNotEnabled()
+        onNodeWithTag("detached-rail-order-c1").performScrollTo().performClick()
         onNode(hasText("子账户不可用，请在此窗口重新选择子账户") and child).assertExists()
         assertEquals(listOf("place:200", "place:100"), broker.events.filter { it.startsWith("place:") })
     }
