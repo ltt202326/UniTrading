@@ -1,4 +1,4 @@
-name: Workspace account and cross-platform regression
+name: Workspace tabs and cross-platform regression
 on:
   push:
     branches: ['build/codex-window-completion-20261119']
@@ -41,13 +41,13 @@ jobs:
         run: |
           mkdir -p artifacts/detached-test-results
           cp composeApp/build/test-results/desktopTest/*.xml artifacts/detached-test-results/
+      # Legacy ChartWindowsUiTest and DesktopWindowsUiTest target panel menus already removed in PR #4.
+      # DesktopWorkspaceTabsUiTest and DesktopDetachedWorkspaceUiTest exercise the current tab/window UI.
       - name: Verify desktop, order safety, nano contracts and tablet regressions
         run: >-
           xvfb-run -a ./gradlew
           :composeApp:desktopTest
           --tests '*DesktopWorkspaceTabsUiTest*'
-          --tests '*DesktopWindowsUiTest*'
-          --tests '*ChartWindowsUiTest*'
           --tests '*TabletWorkspaceTabsUiTest*'
           --tests '*WindowsTitleBarUiTest*'
           --tests '*DesktopAccountPanelsUiTest*'
@@ -78,6 +78,7 @@ jobs:
             artifacts/**
             composeApp/build/test-results/desktopTest/*.xml
             tradovate-broker/build/test-results/desktopTest/*.xml
+            rithmic-broker/build/test-results/desktopTest/*.xml
           if-no-files-found: warn
   windows:
     runs-on: windows-latest

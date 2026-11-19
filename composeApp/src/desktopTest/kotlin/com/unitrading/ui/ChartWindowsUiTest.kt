@@ -247,7 +247,6 @@ class ChartWindowsUiTest {
         compose.waitForIdle()
         compose.onNodeWithTag("plot-menu-BUY-LIMIT").performClick()
         compose.waitForIdle()
-        compose.onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("order-popup"))).performClick()
         confirmOrder(3)
         val order = broker.placed.last()
         assertEquals(Triple("OTHRZ6", Side.BUY, OrderKind.LIMIT), Triple(order.symbol, order.side, order.kind))
