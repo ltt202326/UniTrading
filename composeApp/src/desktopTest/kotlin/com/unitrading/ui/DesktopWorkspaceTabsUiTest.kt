@@ -240,6 +240,62 @@ class DesktopWorkspaceTabsUiTest {
         } finally { compose.runOnIdle { frame.dispose() } }
     }
 
+    @Test fun windowsTitleTabsRespondToMouseAfterQuotesUpdate() {
+        val slot = DesktopTitleBarSlot()
+        lateinit var frame: ComposeWindow
+        compose.runOnIdle { frame = ComposeWindow() }
+        val windowScope = object : FrameWindowScope { override val window: ComposeWindow = frame }
+        try {
+            compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f), LocalChartPlatform provides ChartPlatform.DESKTOP,
+                LocalPanelWindowHost provides windows, LocalDesktopTitleBarSlot provides slot) {
+                Column(Modifier.requiredSize(1500.dp, 1000.dp)) {
+                    TradingTheme { with(windowScope) { WindowsTitleBar(slot, WindowState(), "UniTrading · 交易终端") { } } }
+                    Box(Modifier.weight(1f).fillMaxWidth()) { TradingScreen(runtime) }
+                }
+            } }
+            compose.onNodeWithTag("chart-new-workspace").performClick()
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("chart-symbol").performClick()
+            compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
+            compose.onNodeWithTag("chart-new-workspace").performClick()
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c2").fetchSemanticsNodes().isNotEmpty() }
+            compose.runOnIdle {
+                broker.market.value = broker.market.value.copy(quotes = broker.market.value.quotes.mapValues { (_, q) ->
+                    q.copy(lastTrade = 550000, settlement = 555000)
+                }, revision = 8)
+            }
+            fun clickTab(id: String) {
+                val tab = compose.onNodeWithTag("workspace-tab-$id")
+                val size = tab.fetchSemanticsNode().size
+                tab.performMouseInput { click(Offset(size.width * .15f, size.height * .5f)) }
+                compose.waitForIdle()
+            }
+            fun left(id: String) = compose.onNodeWithTag("workspace-tab-$id").fetchSemanticsNode().boundsInRoot.left
+            clickTab("main")
+            compose.onNodeWithTag("chart-symbol").assertTextContains("TESTZ6", substring = true)
+            clickTab("c1")
+            compose.onNodeWithTag("chart-symbol").assertTextContains("OTHRZ6", substring = true)
+            val source = compose.onNodeWithTag("workspace-tab-c2")
+            val from = source.fetchSemanticsNode().boundsInRoot
+            val to = compose.onNodeWithTag("workspace-tab-main").fetchSemanticsNode().boundsInRoot
+            val delta = to.center.x - from.center.x - 20f
+            source.performMouseInput {
+                val start = Offset(from.width * .35f, from.height * .5f)
+                moveTo(start); press(); moveTo(start + Offset(delta * .5f, 0f)); moveTo(start + Offset(delta, 0f)); release()
+            }
+            compose.waitForIdle()
+            assertTrue(left("c2") < left("main"), "Dragging a Windows title tab changes its order")
+            compose.onNodeWithTag("detach-workspace-c1").performMouseInput { click() }
+            compose.waitUntil(10_000) { "chart-c1" in windows.open }
+            compose.onNodeWithTag("dock-workspace-c1").performClick()
+            compose.waitUntil(10_000) { "chart-c1" !in windows.open }
+            compose.onNodeWithTag("close-workspace-c1").performMouseInput { click() }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isEmpty() }
+            assertEquals(2, runtime.desktopWorkspaceCount.value)
+            assertTrue(broker.placed.isEmpty())
+        } finally { compose.runOnIdle { frame.dispose() } }
+    }
+
     @Test fun tabsDragHorizontallyAndKeepTheirOrderAfterRestart() {
         render(); addTab()
         compose.onNodeWithTag("chart-new-workspace").performClick()
