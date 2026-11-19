@@ -26,6 +26,7 @@ jobs:
           --tests '*DesktopDetachedWorkspaceUiTest*'
           --tests '*DesktopWorkspaceTabsUiTest.windowsTitleTabsRespondToMouseAfterQuotesUpdate*'
           --tests '*DesktopWorkspaceTabsUiTest.restoredWindowsTitleUpdatesAllQuotesWithoutSelectingEachTab*'
+          --tests '*WorkspaceTabDataTest*'
           --no-daemon
       - name: Preserve detached-window test results
         run: |
@@ -101,3 +102,11 @@ jobs:
           path: dist/UniTrading-Desktop-Nano-Windows-x64.zip
           compression-level: 0
           if-no-files-found: error
+      - name: Verify Windows title bar interactions
+        shell: pwsh
+        run: >-
+          ./gradlew.bat :composeApp:desktopTest
+          --tests '*WindowsTitleBarUiTest.titleBarRespondsToNativeMouse*'
+          --tests '*DesktopWorkspaceTabsUiTest.windowsTitleTabsRespondToMouseAfterQuotesUpdate*'
+          --tests '*DesktopWorkspaceTabsUiTest.restoredWindowsTitleUpdatesAllQuotesWithoutSelectingEachTab*'
+          --no-daemon

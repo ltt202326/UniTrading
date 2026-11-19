@@ -2,6 +2,7 @@
 
 ## 简体中文
 
+- 修复 Windows 标题栏中图表标签的切换、关闭、排序与弹出操作；行情刷新时仍保持操作可用。
 - 修复桌面重启后窗口标签的行情和涨跌幅不随快照更新的问题；各标签继续订阅各自的品种。
 - Tradovate 的 @NNQ、@NES 图表与 @MCL 一样使用成交量核实后的实际月份合约 K 线；未确认时不显示旧合约或别名 K 线，换月后切换到新主力。历史仅包含当前主力月份。
 - 桌面拖出的图表窗口新增独立的行情、DOM、下单与交易侧栏；平台和子账户与主窗口同步，并提供两个带确认的平仓入口。DOM 数据流跟随当前活动窗口；下单前检查窗口对应的图表、账户和合约。
@@ -40,6 +41,7 @@
 
 ## English
 
+- Fix selecting, closing, reordering and detaching chart tabs in the Windows title bar while quotes refresh.
 - Refresh restored desktop tab prices and percentage changes from live market snapshots without selecting each tab.
 - For Tradovate @NNQ and @NES, use the actual bars of the volume-confirmed dated contract, as for @MCL. Hide bars while unconfirmed and switch sources on rollover; history covers only the current contract.
 - Add independent market, DOM, order and trade panels to detached desktop chart windows. Login and trading account remain shared with the main window; both flatten actions retain confirmation. The single DOM feed follows the active window, and order entry checks its chart and account first.

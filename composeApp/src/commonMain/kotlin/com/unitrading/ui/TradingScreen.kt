@@ -1545,28 +1545,21 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         val tabInstrument = catalog.instruments.firstOrNull { it.symbol == tabSymbol }
                         workspaceTabData(id, tabSymbol, tabInstrument, tabInstrument?.priceSymbol?.let { market.quotes[it] }, market.connected)
                     } else emptyList()
-                // The Windows title bar is composed outside this part of the screen. Publish the
-                // actual tab data as state: a remembered composable lambda alone can keep the
-                // title bar's first quote snapshot until some other title-bar interaction.
-                val titleTabs = rememberUpdatedState(tabs)
-                val titleSelection = rememberUpdatedState(selectedWorkspace)
-                val titleSelect = rememberUpdatedState<(String) -> Unit>(::selectWorkspace)
-                val titleDetach = rememberUpdatedState<(String) -> Unit>(::detachWorkspace)
-                val titleClose = rememberUpdatedState<(String) -> Unit>(::closeChart)
-                val titleReorder = rememberUpdatedState<(List<String>) -> Unit>(::reorderWorkspaces)
-                val titleCanDetach = rememberUpdatedState(canDetachWorkspaces)
-                val titleTouchSized = rememberUpdatedState(tabletWorkspaces)
-                val titleContent: @Composable () -> Unit = {
-                    WorkspaceTabStrip(titleTabs.value, titleSelection.value, titleSelect.value, titleDetach.value,
-                        titleClose.value, titleReorder.value, Modifier.fillMaxWidth(),
-                        canDetach = titleCanDetach.value, touchSized = titleTouchSized.value)
-                }
-                DisposableEffect(titleBarSlot, nativeDesktop, desktop) {
+                // The native title row is a sibling composition. Publish its data and the current
+                // workspace actions separately so live quotes cannot leave stale event handlers.
+                val titleOwner = remember(titleBarSlot, plugin) { Any() }
+                SideEffect {
                     if (titleBarSlot != null && nativeDesktop && desktop) {
-                        val registered: @Composable () -> Unit = { titleContent() }
-                        titleBarSlot.content = registered
-                        onDispose { if (titleBarSlot.content === registered) titleBarSlot.content = null }
-                    } else onDispose { }
+                        titleBarSlot.publish(titleOwner, DesktopTitleTabs(tabs, selectedWorkspace, canDetachWorkspaces, tabletWorkspaces),
+                            ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces)
+                    }
+                }
+                val titleContent: @Composable () -> Unit = {
+                    WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces,
+                        Modifier.fillMaxWidth(), canDetach = canDetachWorkspaces, touchSized = tabletWorkspaces)
+                }
+                DisposableEffect(titleBarSlot, nativeDesktop, desktop, titleOwner) {
+                    onDispose { titleBarSlot?.clear(titleOwner) }
                 }
                 Box(Modifier.fillMaxSize().imePadding()) {
                 Row(Modifier.fillMaxSize()) {
