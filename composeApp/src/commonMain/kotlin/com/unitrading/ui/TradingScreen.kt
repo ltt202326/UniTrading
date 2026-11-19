@@ -1838,7 +1838,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                                 terminal = { m -> workspaceTerminal(target, m) },
                                                 terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
                                                 dom = if (domSupported && detachedInstrument != null) { { m, close ->
-                                                    DomPanel(plugin, detachedInstrument, account.orders.filter { it.request.symbol == detachedInstrument.executionSymbol }, m, close)
+                                                    Column(m.background(colors.Surface)) {
+                                                        DomPanel(plugin, detachedInstrument, account.orders.filter { it.request.symbol == detachedInstrument.executionSymbol },
+                                                            Modifier.weight(1f).fillMaxWidth(), close)
+                                                        Text("盘口随当前活动窗口切换", Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                            .testTag("detached-dom-scope-$id"), color = colors.Muted, style = MaterialTheme.typography.labelSmall)
+                                                    }
                                                 } } else null,
                                                 onDomOpenChange = { open -> if (open) detachedDomOpen[id] = true else detachedDomOpen.remove(id) },
                                                 onActivate = ::activateDetached)

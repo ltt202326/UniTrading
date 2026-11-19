@@ -36,11 +36,11 @@ class DesktopDetachedWorkspaceUiTest {
             Box(Modifier.requiredSize(1600.dp, 1000.dp)) { TradingScreen(runtime) }
         } }
         onNodeWithTag("chart-new-workspace").performClick()
-        waitUntil(10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
         onNodeWithTag("chart-symbol").performClick()
         onNodeWithTag("symbol-option-OTHRZ6").performClick()
         onNodeWithTag("detach-workspace-c1").performClick()
-        waitUntil(10_000) { "chart-c1" in windows.open }
+        waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open }
         val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
         onNode(hasTestTag("detached-account-toolbar-c1") and child).assertExists()
         onNode(hasTestTag("quick-login-picker") and child).assertExists()
@@ -49,7 +49,7 @@ class DesktopDetachedWorkspaceUiTest {
         onNode(hasTestTag("market-watch") and child).assertExists()
 
         onNodeWithTag("detached-rail-order-c1").performScrollTo().performClick()
-        waitUntil(5_000) { onAllNodes(hasTestTag("order-fields") and child).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("order-fields") and child).fetchSemanticsNodes().isNotEmpty() }
         onNode(hasText("OTHRZ6", substring = true) and hasAnyAncestor(hasTestTag("detached-side-panel-c1"))).assertExists()
         onNode(hasTestTag("review-order") and child).performScrollTo().performClick()
         onNodeWithTag("desktop-order-confirmation").assertExists()
@@ -57,9 +57,15 @@ class DesktopDetachedWorkspaceUiTest {
         onNodeWithTag("cancel-order-review").performClick()
         assertTrue(source.placed.isEmpty(), "Reviewing and cancelling a child-window order never submits it")
 
+        onNodeWithTag("workspace-tab-main").performClick()
+        onNode(hasTestTag("inactive-workspace-order-c1") and child).assertExists()
+        onNode(hasTestTag("activate-workspace-order-c1") and child).performClick()
+        onNode(hasTestTag("order-fields") and child).assertExists()
+        assertTrue(source.placed.isEmpty(), "Switching focus between workspaces never submits the old ticket")
+
         onNodeWithTag("detached-rail-dom-c1").performScrollTo().performClick()
         onNode(hasTestTag("dom-panel") and child).assertExists()
-        waitUntil(5_000) { depthWatches.contains("OTHRZ6") }
+        waitUntil(timeoutMillis = 5_000) { depthWatches.contains("OTHRZ6") }
         onNodeWithTag("detached-rail-terminal-c1").performScrollTo().performClick()
         onNode(hasTestTag("desktop-trade-tab-POSITIONS") and child).assertExists()
         onNode(hasTestTag("desktop-trade-tab-ORDERS") and child).assertExists()
@@ -83,9 +89,9 @@ class DesktopDetachedWorkspaceUiTest {
             Box(Modifier.requiredSize(1600.dp, 1000.dp)) { TradingScreen(runtime) }
         } }
         onNodeWithTag("chart-new-workspace").performClick()
-        waitUntil(10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
         onNodeWithTag("detach-workspace-c1").performClick()
-        waitUntil(10_000) { "chart-c1" in windows.open }
+        waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open }
         val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
         onNode(hasTestTag("quick-account-picker") and child).performClick()
         onNodeWithTag("quick-account-${second.id}").performClick()
