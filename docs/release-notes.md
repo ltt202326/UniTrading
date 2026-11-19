@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 新建图表窗口按钮移至主窗口标签末尾；子窗口显示所选账户的资金和回撤信息。桌面退出时可确认、保存或放弃本次图表和窗口修改。
+
 - 子窗口的图表工具、平仓按钮和账户选择器与主窗口对齐；主账户随主窗口切换，子账户可独立选择并保存，别名只可在主窗口修改。账户不可用时暂停该窗口下单。
 - 图表右键或长按选择市价、限价或突破单时，先填写订单；桌面和平板展开右侧下单栏，手机打开下单界面，提交时沿用风控及确认设置。
 - 修复 Windows 标题栏中图表标签的切换、关闭、排序与弹出操作；行情刷新时仍保持操作可用。
@@ -42,6 +44,8 @@
 - 修复图表上部分止损、止盈线无法拖动的问题：仓位保护不能成组修改、但交易商允许逐单修改时，仍可拖动对应的 SL / TP 线。每张保护单只显示一次，拖动只修改该单，沿用交易确认与风控检查；不能改单的保护线仍只读。
 
 ## English
+
+- Move the new workspace button to the end of the main tab strip, show the selected account figures in detached windows, and offer to save or discard workspace changes on desktop exit.
 
 - Align detached-window account and flatten controls with the main toolbar. The login follows the main window, while each detached window selects and restores its own subaccount; aliases are edited only in the main window. Disable trading when a selected account is unavailable.
 - A chart context-menu or long-press order opens a prefilled order form (the right-hand panel on desktop and tablets); it is submitted with the existing risk and confirmation settings.

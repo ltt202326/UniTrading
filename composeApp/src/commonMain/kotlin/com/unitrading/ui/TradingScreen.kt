@@ -1315,9 +1315,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             indicatorSettings.indicators.any { it.visible }) { work { indicatorChartId = target; showIndicators = true } },
                         modifier, compact = compact && !singleLine,
                         additionalControls = {
-                            if (chartWindowsShown) ChartNewWorkspaceButton(onClick = {
-                                activateChart(target); openChart()
-                            }, enabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS)
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
                         }, singleRow = singleLine)
                 }
@@ -1677,13 +1674,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val titleOwner = remember(titleBarSlot, plugin) { Any() }
                 SideEffect {
                     if (titleBarSlot != null && nativeDesktop && desktop) {
-                        titleBarSlot.publish(titleOwner, DesktopTitleTabs(tabs, selectedWorkspace, canDetachWorkspaces, tabletWorkspaces),
-                            ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces)
+                        titleBarSlot.publish(titleOwner, DesktopTitleTabs(tabs, selectedWorkspace, canDetachWorkspaces, tabletWorkspaces, !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS),
+                            ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces, { openChart() })
                     }
                 }
                 val titleContent: @Composable () -> Unit = {
                     WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces,
-                        Modifier.fillMaxWidth(), canDetach = canDetachWorkspaces, touchSized = tabletWorkspaces)
+                        Modifier.fillMaxWidth(), canDetach = canDetachWorkspaces, touchSized = tabletWorkspaces,
+                        onAdd = { openChart() }, canAdd = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS)
                 }
                 DisposableEffect(titleBarSlot, nativeDesktop, desktop, titleOwner) {
                     onDispose { titleBarSlot?.clear(titleOwner) }
@@ -1974,11 +1972,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             newChartWindowEnabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
                             onOpenSettings = if (desktopStyle) ({ showActivity = false; showSettings = true }) else null,
                             onResetLayout = if (desktopStyle) ({ showResetLayout = true }) else null,
-                            windowMenuExtra = { close ->
-                                DividerLine(Modifier.padding(vertical = 4.dp))
-                                DropdownMenuItem(text = { Text("新建图表窗口") }, onClick = { close(); openChart() }, enabled = chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
-                                    leadingIcon = { Icon(AppIcons.Add, contentDescription = null) }, modifier = Modifier.testTag("window-menu-new-chart"))
-                            })
+                            windowMenuExtra = {})
                         // A detached tab keeps its own workspace and can be returned to the tab strip.
                         val chartWindows = LocalPanelWindowHost.current
                         val layoutPreferences by runtime.desktopLayout.preferences.collectAsState()
@@ -2069,6 +2063,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                                 onDomOpenChange = { open -> if (open) detachedDomOpen[id] = true else detachedDomOpen.remove(id) },
                                                 onActivate = ::activateDetached)
                                         }
+                                        DividerLine()
+                                        AccountStrip(childAccount, Modifier.testTag("detached-account-strip-$id"),
+                                            note = "状态以服务器为准 · ${environment.label}", connected = market.connected)
                                     }
                                 }
                             }

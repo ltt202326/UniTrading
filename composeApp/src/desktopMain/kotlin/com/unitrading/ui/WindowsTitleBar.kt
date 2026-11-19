@@ -35,7 +35,7 @@ internal fun WindowScope.WindowsTitleBar(slot: DesktopTitleBarSlot, state: Windo
         if (tabs == null) WindowDraggableArea(Modifier.weight(1f).fillMaxHeight()) { }
         else Box(Modifier.weight(1f).fillMaxHeight()) {
             WorkspaceTabStrip(tabs.tabs, tabs.selected, slot::select, slot::detach, slot::close, slot::reorder,
-                Modifier.fillMaxWidth(), canDetach = tabs.canDetach, touchSized = tabs.touchSized)
+                Modifier.fillMaxWidth(), canDetach = tabs.canDetach, touchSized = tabs.touchSized, onAdd = slot::add, canAdd = tabs.canAdd)
         }
         WindowDraggableArea(Modifier.width(55.dp).fillMaxHeight()) { }
         WindowButton("最小化", "window-minimize", "−") { state.isMinimized = true }
