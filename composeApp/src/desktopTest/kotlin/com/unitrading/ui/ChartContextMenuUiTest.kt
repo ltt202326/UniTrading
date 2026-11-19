@@ -378,7 +378,7 @@ class ChartContextMenuUiTest {
         rightClick(549_000)
         item("BUY-LIMIT").assertTextContains("买入限价 @ 5490.00").performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag("order-quantity").assertTextEquals("")
+        assertEquals("", compose.onNodeWithTag("order-quantity").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
         compose.onNodeWithTag("review-order").assertIsNotEnabled()
         assertTrue(broker.placed.isEmpty())
     }

@@ -139,13 +139,17 @@ class DesktopDetachedWorkspaceUiTest {
         onNodeWithTag("workspace-tab-main").performClick()
         onNode(hasTestTag("quick-account-picker") and main).assertTextContains("主窗口账户", substring = true)
         onNode(hasTestTag("quick-account-picker") and child).assertTextContains("子窗口账户", substring = true)
+        onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("desktop-order"))).performClick()
+        onNode(hasText("主窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
+        onNodeWithTag("confirm-action").performClick()
+        waitUntil(timeoutMillis = 5_000) { "place:100" in broker.events }
         assertEquals(1, broker.openSession(first.id).state.value.positions.size)
         assertEquals(1, broker.openSession(second.id).state.value.positions.size)
         runOnIdle { broker.catalog.value = broker.catalog.value.copy(accounts = listOf(first)) }
         onNode(hasTestTag("quick-account-picker") and child).assertTextContains("选择子账户", substring = true)
         onNode(hasTestTag("flatten-selected-account") and child).assertIsNotEnabled()
         onNode(hasText("子账户不可用，请在此窗口重新选择子账户") and child).assertExists()
-        assertEquals(listOf("place:200"), broker.events.filter { it.startsWith("place:") })
+        assertEquals(listOf("place:200", "place:100"), broker.events.filter { it.startsWith("place:") })
     }
 
     @Test fun detachedSubaccountRestoresWithoutChangingTheMainAccount() = runDesktopComposeUiTest(width = 1600, height = 1000) {
