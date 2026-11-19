@@ -34,8 +34,8 @@ class ChartContextOrderPlatformsTest {
             chart.performTouchInput { longClick(Offset(size.width * .70f, size.height * .70f)) }
             onNodeWithTag("plot-menu-SELL-MARKET").performClick()
             waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("order-side-SELL").fetchSemanticsNodes().isNotEmpty() }
-            onNodeWithTag("order-side-SELL").assertIsSelected()
-            onNodeWithTag("order-kind-MARKET").assertIsSelected()
+            onAllNodesWithTag("order-side-SELL").onFirst().assertIsSelected()
+            onAllNodesWithTag("order-kind-MARKET").onFirst().assertIsSelected()
             assertTrue(broker.placed.isEmpty(), "Choosing a menu item must not place an order, even when confirmation is skipped")
         }
 

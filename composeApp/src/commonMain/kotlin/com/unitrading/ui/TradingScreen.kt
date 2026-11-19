@@ -1837,15 +1837,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             return activeChart == target && restoring == null && chosenSymbol == symbol && accountContextCurrent()
                         }
                         fun workInWorkspace(target: String, action: () -> Unit) {
-                            if (accountOperationPending()) return
-                            if (!readyForWorkspace(target)) { activateChart(target); return }
+                            if (accountOperationPending()) { showNotice("请先完成当前交易操作", attention = true); return }
+                            if (!readyForWorkspace(target)) {
+                                activateChart(target)
+                                showNotice("正在切换窗口，请检查账户与合约后重试", attention = true)
+                                return
+                            }
                             activeWindow = workspaceOf(target).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
                             action()
                         }
                         // Slots can be composed in a separate native window. Keep their callbacks tied to the
                         // current account and draft even when Compose reuses a lambda after switching windows.
                         val submitWorkspaceOrder = rememberUpdatedState<(String) -> Unit> { target ->
-                            workInWorkspace(target) { request?.let { reviewTrade(Confirmation.Place(it)) } }
+                            workInWorkspace(target) {
+                                request?.let { reviewTrade(Confirmation.Place(it)) }
+                                    ?: showNotice("订单参数尚未准备好，请检查后重试", attention = true)
+                            }
                         }
                         val selectWorkspacePosition = rememberUpdatedState<(String, Position) -> Unit> { target, p ->
                             workInWorkspace(target) { focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null }

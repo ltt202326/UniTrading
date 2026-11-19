@@ -1,4 +1,4 @@
-name: Desktop account routing and nano contracts
+name: Desktop account routing and cross-platform packages
 on:
   push:
     branches: ['build/codex-window-completion-20261119']
