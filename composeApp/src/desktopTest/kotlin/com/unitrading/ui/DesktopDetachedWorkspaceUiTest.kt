@@ -150,8 +150,11 @@ class DesktopDetachedWorkspaceUiTest {
         onNodeWithTag("workspace-tab-main").performClick()
         onNode(hasTestTag("quick-account-picker") and main).assertTextContains("主窗口账户", substring = true)
         onNode(hasTestTag("quick-account-picker") and child).assertTextContains("子窗口账户", substring = true)
-        onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("desktop-order"))).performClick()
-        onNodeWithTag("desktop-order-confirmation").assertExists()
+        onNode(hasText("主窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order"))).assertExists()
+        onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("desktop-order"))).assertIsEnabled().performClick()
+        val notices = onAllNodesWithTag("trade-notice").fetchSemanticsNodes().map { it.config.toString() }
+        assertTrue(onAllNodesWithTag("desktop-order-confirmation").fetchSemanticsNodes().isNotEmpty(),
+            "The main order review did not open; notices: $notices; broker events: ${broker.events}")
         onNode(hasText("主窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
         onNodeWithTag("confirm-action").performClick()
         waitUntil(timeoutMillis = 5_000) { "place:100" in broker.events }

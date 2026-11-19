@@ -1839,6 +1839,32 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             activeWindow = workspaceOf(target).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
                             action()
                         }
+                        // Slots can be composed in a separate native window. Keep their callbacks tied to the
+                        // current account and draft even when Compose reuses a lambda after switching windows.
+                        val submitWorkspaceOrder by rememberUpdatedState<(String) -> Unit> { target ->
+                            workInWorkspace(target) { request?.let { reviewTrade(Confirmation.Place(it)) } }
+                        }
+                        val selectWorkspacePosition by rememberUpdatedState<(String, Position) -> Unit> { target, p ->
+                            workInWorkspace(target) { focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null }
+                        }
+                        val selectWorkspaceTrade by rememberUpdatedState<(String, ClosedTrade) -> Unit> { target, t ->
+                            workInWorkspace(target) { focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null }
+                        }
+                        val closeWorkspacePosition by rememberUpdatedState<(String, Position) -> Unit> { target, p ->
+                            workInWorkspace(target) { reviewTrade(Confirmation.Close(p)) }
+                        }
+                        val protectWorkspacePosition by rememberUpdatedState<(String, Position) -> Unit> { target, p ->
+                            workInWorkspace(target) { editProtection(p) }
+                        }
+                        val cancelWorkspaceOrder by rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
+                            workInWorkspace(target) { reviewTrade(Confirmation.Cancel(o)) }
+                        }
+                        val editWorkspaceOrder by rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
+                            workInWorkspace(target) { editPending(o) }
+                        }
+                        val protectWorkspaceOrder by rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
+                            workInWorkspace(target) { editPendingProtection(o) }
+                        }
                         @Composable fun workspaceOrder(target: String, m: Modifier, minimize: () -> Unit) {
                             if (!readyForWorkspace(target)) {
                                 Column(m.background(colors.Surface).padding(16.dp).testTag("inactive-workspace-order-$target"),
@@ -1851,7 +1877,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     if (activeChart != target) Button({ activateChart(target) }, Modifier.testTag("activate-workspace-order-$target")) { Text("激活此窗口") }
                                 }
                             } else OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                { workInWorkspace(target) { request?.let { reviewTrade(Confirmation.Place(it)) } } },
+                                { submitWorkspaceOrder(target) },
                                 m.background(colors.Surface), environment = environment, capacity = capacity,
                                 onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
                                 onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request,
@@ -1884,14 +1910,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         runtime.accountRisk.lockingTrigger(plugin, targetSession), targetSession.account.currency, Modifier.padding(horizontal = 12.dp))
                                 }
                                 TradeTerminal(plugin, targetAccount, market, selectedPositionId.takeIf { readyForWorkspace(target) }, false,
-                                    onSelectPosition = { p -> workInWorkspace(target) { focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null } },
-                                    onSelectTrade = { t -> workInWorkspace(target) { focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null } },
-                                    onClose = { p -> workInWorkspace(target) { reviewTrade(Confirmation.Close(p)) } },
-                                    onProtect = { p -> workInWorkspace(target) { editProtection(p) } },
-                                    onCancel = { o -> workInWorkspace(target) { reviewTrade(Confirmation.Cancel(o)) } },
-                                    onEditOrder = { o -> workInWorkspace(target) { editPending(o) } }, busy = busy,
+                                    onSelectPosition = { p -> selectWorkspacePosition(target, p) },
+                                    onSelectTrade = { t -> selectWorkspaceTrade(target, t) },
+                                    onClose = { p -> closeWorkspacePosition(target, p) },
+                                    onProtect = { p -> protectWorkspacePosition(target, p) },
+                                    onCancel = { o -> cancelWorkspaceOrder(target, o) },
+                                    onEditOrder = { o -> editWorkspaceOrder(target, o) }, busy = busy,
                                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                                    onProtectOrder = { o -> workInWorkspace(target) { editPendingProtection(o) } },
+                                    onProtectOrder = { o -> protectWorkspaceOrder(target, o) },
                                     section = section.takeIf { desktopStyle }, historyTrades = if (desktopStyle) targetTrades else targetAccount.trades)
                             }
                         }
