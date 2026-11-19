@@ -163,7 +163,7 @@ internal fun OrderForm(
                 Text(preview?.entryPrice?.let(instrument::formatPrice) ?: "—", style = type.titleSmall)
             }
             val sideColor = actionFill(if (draft.side == Side.BUY) colors.Up else colors.Down)
-            Button({ println("DEBUG_ORDER_BUTTON"); focus.clearFocus(); onSubmit() }, Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("review-order"),
+            Button({ focus.clearFocus(); onSubmit() }, Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("review-order"),
                 enabled = preview?.valid == true && !busy,
                 colors = ButtonDefaults.buttonColors(containerColor = sideColor, contentColor = contentOn(sideColor))) {
                 Text(if (busy) "处理中…" else (if (skipConfirmation) "" else "检查并") + (if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else "") + draft.side.label())

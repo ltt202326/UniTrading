@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -151,7 +152,10 @@ class DesktopDetachedWorkspaceUiTest {
         onNode(hasTestTag("quick-account-picker") and main).assertTextContains("主窗口账户", substring = true)
         onNode(hasTestTag("quick-account-picker") and child).assertTextContains("子窗口账户", substring = true)
         onNode(hasText("主窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order"))).assertExists()
-        onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("desktop-order"))).assertIsEnabled().performClick()
+        // Fake windows cover the main test surface. Invoke the main button's action directly so
+        // this test exercises its callback rather than clicking the child popup layered over it.
+        onNode(hasTestTag("review-order") and hasAnyAncestor(hasTestTag("desktop-order")))
+            .assertIsEnabled().performSemanticsAction(SemanticsActions.OnClick)
         val notices = onAllNodesWithTag("trade-notice").fetchSemanticsNodes().map { it.config.toString() }
         assertTrue(onAllNodesWithTag("desktop-order-confirmation").fetchSemanticsNodes().isNotEmpty(),
             "The main order review did not open; notices: $notices; broker events: ${broker.events}")
