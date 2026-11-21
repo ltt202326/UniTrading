@@ -73,7 +73,7 @@ class CopyTradingControllerTest {
         assertEquals(1, broker.writes.size)
         assertTrue(broker.writes.single().automated)
         assertNotNull(broker.writes.single().copyExpectedRevision)
-        assertEquals(100, broker.snapshots.getValue("follower").value.positions.single().lotsHundredths)
+        assertEquals(100L, broker.snapshots.getValue("follower").value.positions.single().lotsHundredths)
         advanceTimeBy(2_000); runCurrent()
         assertEquals(1, broker.writes.size)
         broker.change("leader", 0)
