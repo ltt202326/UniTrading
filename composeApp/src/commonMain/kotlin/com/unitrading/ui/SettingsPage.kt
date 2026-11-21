@@ -76,6 +76,8 @@ internal fun SettingsPage(
     var accountsExpanded by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
     var chooseOrderLayout by remember { mutableStateOf(false) }
+    var showCopyTrading by remember { mutableStateOf(false) }
+    if (showCopyTrading) CopyTradingDialog(runtime, plugin, accountId) { showCopyTrading = false }
 
     Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
@@ -114,6 +116,9 @@ internal fun SettingsPage(
             }
 
             SettingsSection("交易") {
+                val copyStatus by runtime.copyTrading.status.collectAsState()
+                SettingsRow("账户跟单 · Demo 验证", copyStatus.message, AppIcons.AccountCircle, "settings-copy-trading",
+                    { showCopyTrading = true })
                 SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
