@@ -1,5 +1,6 @@
 package com.unitrading.app
 
+import com.unitrading.broker.OrderRequest
 import kotlinx.serialization.Serializable
 
 /** The login is part of the identity: broker account and order numbers are not globally unique. */
@@ -21,6 +22,8 @@ internal data class CopyOrderLink(
     val status: CopyLinkStatus = CopyLinkStatus.INTENDED,
     val followerOrderId: String? = null,
     val ownedExitIds: Set<String> = emptySet(),
+    val sourceOrderVersion: Long = 0,
+    val targetRequest: OrderRequest? = null,
 )
 
 /** Pure link checks; callers must durably commit the returned record before any network write. */
