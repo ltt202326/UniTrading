@@ -8,7 +8,7 @@ class CopyTradePlannerTest {
     private fun position(side: Side, contracts: Long, symbol: String = "MESZ6", stop: Long? = null) =
         Position("p", symbol, side, contracts * 100, 100, 0, stopLoss = stop, marginMicros = 0)
     private fun view(id: String, position: Position? = null, ready: Boolean = true, complete: Boolean = true) =
-        CopyAccountView(AccountSnapshot(id, 0, positions = listOfNotNull(position)), ready, ready, complete, false)
+        CopyAccountView(AccountSnapshot(id, 0, positions = listOfNotNull(position)), ready, ready, complete, complete, false)
     private fun views(leader: Position? = null, one: Position? = null, two: Position? = null) = mapOf(
         "leader" to view("leader", leader), "one" to view("one", one), "two" to view("two", two))
     private val flat = mapOf("one" to 0, "two" to 0)

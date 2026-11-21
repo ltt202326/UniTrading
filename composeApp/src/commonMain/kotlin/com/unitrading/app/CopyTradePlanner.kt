@@ -9,6 +9,7 @@ internal data class CopyAccountView(
     val connected: Boolean,
     val synchronized: Boolean,
     val positionsComplete: Boolean,
+    val ordersComplete: Boolean,
     val readOnly: Boolean,
 )
 
@@ -71,7 +72,7 @@ internal object CopyTradePlanner {
         if (selected.distinct().size != selected.size) return "主账户和跟随账户不能重复"
         for (id in selected) {
             val view = views[id] ?: return "账户数据不可用"
-            if (view.snapshot.accountId != id || !view.connected || !view.synchronized || !view.positionsComplete || view.readOnly)
+            if (view.snapshot.accountId != id || !view.connected || !view.synchronized || !view.positionsComplete || !view.ordersComplete || view.readOnly)
                 return "账户未连接、未同步或数据不完整"
             if (view.snapshot.orders.isNotEmpty()) return "存在挂单或保护单，请先处理并核对"
             if (view.snapshot.positions.any { it.stopLoss != null || it.takeProfit != null }) return "存在止盈止损，当前规划器不支持同步保护单"
