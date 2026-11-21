@@ -64,7 +64,7 @@ internal class CopyLimitSubmissionService(private val registry: BrokerRegistry, 
             journal.uncertain(key, link.requestId)
             return CopyLimitSubmission.NeedsReconciliation("下单被拒绝或结果不明，未自动重发；请核对")
         }
-        val id = result.entityId
+        val id = requireNotNull(result.entityId)
         if (!journal.accepted(key, link.requestId, id)) return CopyLimitSubmission.NeedsReconciliation("订单已受理但记录未能保存，请核对")
         return CopyLimitSubmission.AwaitingBrokerConfirmation(id)
     }
