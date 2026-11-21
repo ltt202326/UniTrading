@@ -9,10 +9,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.*
 import com.unitrading.broker.*
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, leaderId: String, onDismiss: () -> Unit) {
     val status by runtime.copyTrading.status.collectAsState()
+    val recovery by runtime.copyTrading.recovery.collectAsState()
+    val scope = rememberCoroutineScope()
     val catalog by broker.catalog.collectAsState()
     val accounts = catalog.accounts.filter { it.id != leaderId && !it.readOnly }
     var selected by remember(broker, leaderId) { mutableStateOf(emptySet<String>()) }
@@ -21,6 +24,7 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
     var maximum by remember { mutableStateOf("1") }
     var error by remember { mutableStateOf<String?>(null) }
     var confirm by remember { mutableStateOf(false) }
+    var confirmRecovery by remember { mutableStateOf(false) }
     val leader = catalog.accounts.firstOrNull { it.id == leaderId }
     val multiplierValue = multiplier.toIntOrNull()
     val maximumValue = maximum.toIntOrNull()
@@ -28,6 +32,16 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
     val valid = leader != null && !leader.readOnly && selected.isNotEmpty() && dated != null &&
         multiplierValue != null && multiplierValue in 1..100 && maximumValue != null && maximumValue in 1..1000
 
+    if (confirmRecovery) AlertDialog(
+        onDismissRequest = { confirmRecovery = false },
+        title = { Text("同步并核对待确认订单") },
+        text = { Text("请先在券商端逐一检查原连接所有主账户和跟随账户的订单、成交及持仓，并处理完毕。确认后会重新同步，只有全部空仓且无挂单才能清除此记录。停止不会撤销已发送订单。") },
+        confirmButton = { TextButton({
+            confirmRecovery = false
+            scope.launch { error = runtime.copyTrading.clearRecovery(broker) }
+        }) { Text("已核对，重新同步") } },
+        dismissButton = { TextButton({ confirmRecovery = false }) { Text("取消") } },
+    )
     if (confirm && valid) AlertDialog(
         onDismissRequest = { confirm = false },
         title = { Text("确认启动 Demo 跟单") },
@@ -46,11 +60,15 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
             Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(status.message, color = if (status.running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("仅支持同一 Tradovate Demo 登录下的账户。程序关闭、断线或异常后停止，不自动恢复。")
-                Text("主账户：${leader?.name ?: leaderId}")
+                recovery?.let { record ->
+                    Text("有未确认订单：${record.symbol}，账户 ${record.accountIds.joinToString()}。请核对券商端。", color = MaterialTheme.colorScheme.error)
+                    OutlinedButton({ confirmRecovery = true }) { Text("同步并核对") }
+                }
                 if (status.running) {
-                    Text("当前组：${status.settings?.symbol.orEmpty()} · ${status.settings?.followers?.size ?: 0} 个跟随账户")
+                    Text("当前主账户：${status.settings?.leaderId.orEmpty()} · ${status.settings?.symbol.orEmpty()} · ${status.settings?.followers?.size ?: 0} 个跟随账户")
                     OutlinedButton({ runtime.copyTrading.stop() }) { Text("停止跟单") }
                 } else {
+                    Text("主账户：${leader?.name ?: leaderId}")
                     if (broker.descriptor.environment != BrokerEnvironment.REMOTE_DEMO) Text("请切换到 Tradovate Demo 后使用。", color = MaterialTheme.colorScheme.error)
                     OutlinedTextField(symbol, { symbol = it.trim().uppercase() }, label = { Text("到期合约，如 MESZ6") }, singleLine = true)
                     Text("选择跟随账户（只能在当前连接内选择）")

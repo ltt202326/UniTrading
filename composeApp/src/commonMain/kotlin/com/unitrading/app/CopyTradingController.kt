@@ -4,21 +4,34 @@ import com.unitrading.broker.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import kotlin.time.TimeSource
 
 internal data class CopyTradingStatus(val running: Boolean = false, val message: String = "已停止", val settings: CopyPlanSettings? = null)
+@Serializable
+internal data class CopyRecovery(val brokerId: String, val accountIds: List<String>, val symbol: String, val requestId: String)
 
 /** Demo-only and in-memory. There is no automatic resume, replay, or retry after a process or connection interruption. */
-internal class CopyTradingController(private val registry: BrokerRegistry, private val risk: AccountRiskController) {
+internal class CopyTradingController(private val registry: BrokerRegistry, private val risk: AccountRiskController, private val store: SnapshotStore) {
+    private val key = "copy-unconfirmed-v1"
+    private val loaded = runCatching { store.read(key)?.takeIf { it.isNotBlank() }?.let { Json.decodeFromString<CopyRecovery>(it) } }
+    private val mutableRecovery = MutableStateFlow(loaded.getOrNull())
+    val recovery = mutableRecovery.asStateFlow()
+    private var recoveryUnreadable = loaded.isFailure
     private val mutableStatus = MutableStateFlow(CopyTradingStatus())
     val status = mutableStatus.asStateFlow()
     private var generation = 0L
+    private var inFlight = false
+    private var reviewRequired: Pair<String, Long>? = null
     private data class Group(val broker: BrokerPlugin, val settings: CopyPlanSettings, val sessions: Map<String, AccountSession>, val token: Long,
         val epoch: Long, val expected: MutableMap<String, Int>)
     private var group: Group? = null
 
     fun start(broker: BrokerPlugin, settings: CopyPlanSettings): String? {
         if (group != null) return "已有跟单组运行"
+        if (inFlight) return "上一笔跟单仍在处理，请等待并核对账户"
+        if (recoveryUnreadable || mutableRecovery.value != null) return "存在待核对的跟单记录，请先同步并核对账户"
         if (broker.descriptor.environment != BrokerEnvironment.REMOTE_DEMO || !broker.descriptor.id.startsWith("tradovate-"))
             return "当前验证版仅支持 Tradovate Demo"
         if (registry.plugins.none { it === broker }) return "连接已变化，请重新选择"
@@ -32,17 +45,40 @@ internal class CopyTradingController(private val registry: BrokerRegistry, priva
         val views = views(broker, sessions) ?: return "账户快照尚未同步，请稍后重试"
         val epoch = views[settings.leaderId]?.snapshot?.copyEpoch ?: return "连接状态无法确认"
         if (views.values.any { it.snapshot.copyEpoch != epoch }) return "账户连接状态不一致"
+        reviewRequired?.let { (id, oldEpoch) ->
+            if (id != broker.descriptor.id || epoch == oldEpoch) return "上一笔订单结果未确认，请先在原连接同步账户并逐一核对"
+        }
         val initial = CopyTradePlanner.initial(settings, views)
         if (initial is CopyPlan.Blocked) return initial.reason
+        reviewRequired = null
         group = Group(broker, settings, sessions, ++generation, epoch, settings.followers.associate { it.accountId to 0 }.toMutableMap())
         mutableStatus.value = CopyTradingStatus(true, "运行中 · 仅 Demo，等待主账户成交", settings)
         return null
     }
 
     fun stop(reason: String = "已停止，请核对所有账户；停止不会撤销正在处理的订单") {
+        if (inFlight) group?.let { reviewRequired = it.broker.descriptor.id to it.epoch }
         generation++
         group = null
         mutableStatus.value = CopyTradingStatus(false, reason)
+    }
+
+    /** Explicit user action: refresh and require all original accounts flat and order-free before clearing the journal. */
+    suspend fun clearRecovery(broker: BrokerPlugin): String? {
+        if (inFlight || group != null) return "订单或跟单组仍在运行"
+        if (recoveryUnreadable) return "跟单记录无法读取，不能自动清除"
+        val record = mutableRecovery.value ?: return null
+        if (broker.descriptor.id != record.brokerId || registry.plugins.none { it === broker }) return "请先连接原 Tradovate Demo 账户"
+        try { broker.resynchronize() } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { return "账户同步失败，请核对后重试" }
+        if (!broker.market.value.let { it.connected && it.tradingReady }) return "账户尚未完成同步"
+        val sessions = try { record.accountIds.associateWith { broker.openSession(it) } }
+            catch (_: Exception) { return "原账户不可用，请核对连接" }
+        val rows = views(broker, sessions) ?: return "账户快照尚未同步"
+        if (rows.values.any { !it.positionsComplete || !it.ordersComplete || it.snapshot.positions.isNotEmpty() || it.snapshot.orders.isNotEmpty() })
+            return "原账户仍有仓位、挂单或数据不完整，请先逐一处理"
+        return try { store.write(key, ""); mutableRecovery.value = null; reviewRequired = null; null }
+        catch (_: Exception) { "无法保存核对结果，未清除待核对记录" }
     }
 
     /** Lives with the main screen, never with the settings dialog. A cancelled screen always stops the group. */
@@ -106,6 +142,11 @@ internal class CopyTradingController(private val registry: BrokerRegistry, priva
         val oldFills = session.state.value.executions.map { it.id }.toSet()
         mutableStatus.value = CopyTradingStatus(true, "正在提交 ${session.account.name} 的模拟订单", g.settings)
         val guardedRequest = request.copy(copyExpectedRevision = fresh.getValue(g.settings.leaderId).snapshot.copyRevision)
+        inFlight = true
+        try {
+        val record = CopyRecovery(g.broker.descriptor.id, g.sessions.keys.toList(), request.symbol, id)
+        try { store.write(key, Json.encodeToString(CopyRecovery.serializer(), record)); mutableRecovery.value = record }
+        catch (_: Exception) { recoveryUnreadable = true; return stop("无法保存订单记录，未发送；请核对本机存储") }
         val result = try { withTimeoutOrNull(20_000) { session.placeOrder(id, guardedRequest) } }
             catch (cancel: CancellationException) { stop("程序中断，订单结果待核对"); throw cancel }
             catch (_: Exception) { null }
@@ -134,7 +175,10 @@ internal class CopyTradingController(private val registry: BrokerRegistry, priva
         }
         if (group?.token != g.token) return
         if (confirmed != true) return stop("未确认全部成交和仓位，未重发；请核对账户")
+        try { store.write(key, ""); mutableRecovery.value = null }
+        catch (_: Exception) { return stop("成交已确认但无法保存结果，请核对账户") }
         g.expected[adjustment.accountId] = adjustment.targetContracts
         mutableStatus.value = CopyTradingStatus(true, "模拟成交已确认 · ${session.account.name}", g.settings)
+        } finally { inFlight = false }
     }
 }
