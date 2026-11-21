@@ -64,6 +64,7 @@ class TradovateBroker(
     private var accountFlows = emptyMap<String, MutableStateFlow<AccountSnapshot>>()
     private var incompleteAccounts = emptySet<String>()
     private var copyRevision = 0L
+    private var copyEpoch = 0L
     private var copySnapshotValid = false
     private val book = EntityBook()
     private var authorizedAccounts = emptySet<Long>()
@@ -338,7 +339,7 @@ class TradovateBroker(
     }
 
     private suspend fun synchronizeAccount(account: TradovateSocket) = synchronizationLock.withLock {
-        lock.withLock { synchronizing = true; copySnapshotValid = false; queuedEvents.clear() }
+        lock.withLock { synchronizing = true; copySnapshotValid = false; copyEpoch++; queuedEvents.clear() }
         try {
         var snapshot = account.request("user/syncrequest", buildJsonObject {
             put("splitResponses", false)
@@ -1682,7 +1683,7 @@ class TradovateBroker(
             val snapshot = AccountSnapshot(account.id, balance ?: 0, equity ?: 0, margin ?: 0, positions, pending,
                 trades = pairedTrades(book, aid, contractSpecs, fillFees), events = localEvents[account.id] ?: emptyList(), executions = fills,
                 balanceKnown = balance != null, equityKnown = equity != null, marginKnown = margin != null, equityEstimated = estimatedEquity != null && positions.isNotEmpty(),
-                dailyPnl = financials[aid]?.dailyPnl, drawdown = drawdown, copyRevision = revision,
+                dailyPnl = financials[aid]?.dailyPnl, drawdown = drawdown, copyRevision = revision, copyEpoch = copyEpoch,
                 copyPositionsComplete = identifiable && positions.size == rawPositions.size,
                 // Unknown statuses fail closed; live orders are never inferred from the UI's filtered list.
                 copyOrdersClear = identifiable && orders.all { it.str("ordStatus") in setOf("Filled", "Completed", "Cancelled", "Canceled", "Rejected", "Expired") })

@@ -310,6 +310,8 @@ data class AccountSnapshot(
     val drawdown: AccountDrawdown? = null,
     /** Matching non-null revisions identify account views built from the same synchronized broker book. */
     val copyRevision: Long? = null,
+    /** Changes on every broker account resynchronization; a running group must not silently resume. */
+    val copyEpoch: Long? = null,
     /** False unless the adapter can account for every position in this book. */
     val copyPositionsComplete: Boolean = false,
     /** True only if all order statuses are understood and no order is active. */

@@ -16,7 +16,7 @@ class CopyTradingControllerTest {
         override val catalog = MutableStateFlow(BrokerCatalog(instruments, accounts))
         override val market = MutableStateFlow(MarketSnapshot())
         private var revision = 1L
-        val snapshots = accounts.associate { it.id to MutableStateFlow(AccountSnapshot(it.id, 0, copyRevision = revision,
+        val snapshots = accounts.associate { it.id to MutableStateFlow(AccountSnapshot(it.id, 0, copyRevision = revision, copyEpoch = 1,
             copyPositionsComplete = true, copyOrdersClear = true)) }
         val writes = mutableListOf<OrderRequest>()
 
@@ -28,6 +28,11 @@ class CopyTradingControllerTest {
             rows[id] = value.copy(positions = positions, executions = value.executions + listOfNotNull(execution))
             revision++
             rows.forEach { (key, row) -> snapshots.getValue(key).value = row.copy(copyRevision = revision) }
+        }
+
+        fun resynchronize() {
+            revision++
+            snapshots.values.forEach { it.value = it.value.copy(copyEpoch = 2, copyRevision = revision) }
         }
 
         override fun openSession(accountId: String): AccountSession {
@@ -98,6 +103,19 @@ class CopyTradingControllerTest {
         advanceTimeBy(1_000); runCurrent()
         assertFalse(controller.status.value.running)
         broker.market.value = MarketSnapshot()
+        broker.change("leader", 1)
+        advanceTimeBy(1_000); runCurrent()
+        assertTrue(broker.writes.isEmpty())
+    }
+
+    @Test fun aResynchronizationStopsRatherThanSilentlyResuming() = runTest {
+        val broker = FakeBroker()
+        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(MemorySnapshotStore()))
+        assertNull(controller.start(broker, settings))
+        backgroundScope.launch { controller.monitor() }
+        broker.resynchronize()
+        advanceTimeBy(1_000); runCurrent()
+        assertFalse(controller.status.value.running)
         broker.change("leader", 1)
         advanceTimeBy(1_000); runCurrent()
         assertTrue(broker.writes.isEmpty())

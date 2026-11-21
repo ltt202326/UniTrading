@@ -14,7 +14,7 @@ internal class CopyTradingController(private val registry: BrokerRegistry, priva
     val status = mutableStatus.asStateFlow()
     private var generation = 0L
     private data class Group(val broker: BrokerPlugin, val settings: CopyPlanSettings, val sessions: Map<String, AccountSession>, val token: Long,
-        val expected: MutableMap<String, Int>)
+        val epoch: Long, val expected: MutableMap<String, Int>)
     private var group: Group? = null
 
     fun start(broker: BrokerPlugin, settings: CopyPlanSettings): String? {
@@ -30,9 +30,11 @@ internal class CopyTradingController(private val registry: BrokerRegistry, priva
         if (settings.followers.any { risk.rules.value[broker.descriptor.id]?.get(it.accountId)?.brackets?.enabled == true })
             return "跟随账户启用了金额止盈止损，验证版暂不支持"
         val views = views(broker, sessions) ?: return "账户快照尚未同步，请稍后重试"
+        val epoch = views[settings.leaderId]?.snapshot?.copyEpoch ?: return "连接状态无法确认"
+        if (views.values.any { it.snapshot.copyEpoch != epoch }) return "账户连接状态不一致"
         val initial = CopyTradePlanner.initial(settings, views)
         if (initial is CopyPlan.Blocked) return initial.reason
-        group = Group(broker, settings, sessions, ++generation, settings.followers.associate { it.accountId to 0 }.toMutableMap())
+        group = Group(broker, settings, sessions, ++generation, epoch, settings.followers.associate { it.accountId to 0 }.toMutableMap())
         mutableStatus.value = CopyTradingStatus(true, "运行中 · 仅 Demo，等待主账户成交", settings)
         return null
     }
@@ -76,7 +78,8 @@ internal class CopyTradingController(private val registry: BrokerRegistry, priva
     }
 
     private fun authorized(g: Group): Boolean = group?.token == g.token && registry.plugins.any { it === g.broker } &&
-        g.broker.market.value.connected && g.sessions.keys.all { id -> g.broker.catalog.value.accounts.any { it.id == id && !it.readOnly } }
+        g.broker.market.value.connected && g.sessions.all { (id, session) -> session.state.value.copyEpoch == g.epoch &&
+            g.broker.catalog.value.accounts.any { it.id == id && !it.readOnly } }
 
     private fun views(broker: BrokerPlugin, sessions: Map<String, AccountSession>): Map<String, CopyAccountView>? {
         val rows = sessions.mapValues { (_, session) -> session.state.value }
@@ -111,7 +114,11 @@ internal class CopyTradingController(private val registry: BrokerRegistry, priva
             return stop("订单被拒绝或结果未知，未重发；请核对账户")
         val orderId = result.entityId
         val confirmed = withTimeoutOrNull(15_000) {
+            var previous = TimeSource.Monotonic.markNow()
             while (true) {
+                val current = TimeSource.Monotonic.markNow()
+                if ((current - previous).inWholeMilliseconds > 5_000) return@withTimeoutOrNull false
+                previous = current
                 if (!authorized(g)) return@withTimeoutOrNull false
                 val snapshot = session.state.value
                 val fills = snapshot.executions.filter { it.orderId == orderId && it.id !in oldFills }
