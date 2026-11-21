@@ -154,6 +154,8 @@ data class BrokerCapabilities(
      * moving the entry moves them too. Elsewhere they stay at the prices they had.
      */
     val bracketsFollowEntry: Boolean = false,
+    /** Supports a broker-held entry order with attached exit legs submitted together. */
+    val nativeEntryOso: Boolean = false,
 ) {
     /** Whether an open position can take a stop loss or take profit it does not have yet. */
     val addPositionProtection: Boolean get() = addProtection || ocoProtection
@@ -316,6 +318,8 @@ data class AccountSnapshot(
     val copyPositionsComplete: Boolean = false,
     /** True only if all order statuses are understood and no order is active. */
     val copyOrdersClear: Boolean = false,
+    /** Active orders have been fully represented, and every order status is understood. */
+    val copyOrdersComplete: Boolean = false,
 ) {
     val freeMarginMicros: Long get() = equityMicros - marginMicros
     val floatingPnlMicros: Long get() = equityMicros - balanceMicros

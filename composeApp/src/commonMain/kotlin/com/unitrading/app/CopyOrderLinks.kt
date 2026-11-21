@@ -11,7 +11,7 @@ internal data class CopyAccountKey(val loginId: String, val accountId: String)
 internal data class CopyOrderKey(val leader: CopyAccountKey, val leaderOrderId: String, val follower: CopyAccountKey)
 
 @Serializable
-internal enum class CopyLinkStatus { INTENDED, ACCEPTED, UNCERTAIN, TERMINAL }
+internal enum class CopyLinkStatus { INTENDED, ACCEPTED, UNCERTAIN, ABORTED_BEFORE_SEND, TERMINAL }
 
 @Serializable
 internal data class CopyOrderLink(

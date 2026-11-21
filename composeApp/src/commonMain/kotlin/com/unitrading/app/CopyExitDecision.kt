@@ -1,5 +1,7 @@
 package com.unitrading.app
 
+import com.unitrading.broker.Side
+
 /** Read-only decision for one attributed follower trade. It does not send, cancel or flatten any orders. */
 internal data class CopiedTradeExitView(
     val brokerSynchronized: Boolean,
@@ -17,6 +19,10 @@ internal data class CopiedTradeExitView(
     val ownedWorkingEntryId: String? = null,
     /** Required before cancelling a partially filled entry; OSO cancellation may affect protective legs. */
     val partialEntryCancellationPreservesProtection: Boolean = false,
+    val expectedSide: Side? = null,
+    val actualSide: Side? = null,
+    val positionId: String? = null,
+    val positionVersion: Long? = null,
 )
 
 internal sealed interface CopyExitDecision {
@@ -25,7 +31,7 @@ internal sealed interface CopyExitDecision {
     data class CancelOwnedExits(val orderIds: Set<String>) : CopyExitDecision
     data class CancelOwnedEntry(val orderId: String) : CopyExitDecision
     /** Caller must use a checked close by position identity, not an opposite market order. */
-    data class CloseCopiedPosition(val contracts: Int) : CopyExitDecision
+    data class CloseCopiedPosition(val positionId: String, val positionVersion: Long, val contracts: Int) : CopyExitDecision
     data class Stop(val reason: String) : CopyExitDecision
 }
 
@@ -36,6 +42,11 @@ internal object CopyExitPlanner {
         if (view.attributedContracts < 0 || view.absoluteNetContractsOnSymbol < 0 ||
             view.attributedContracts != view.absoluteNetContractsOnSymbol || view.unrelatedWorkingOrdersOnSymbol)
             return CopyExitDecision.Stop("仓位不能完整归属于此跟单，请核对")
+        if (view.attributedContracts > 0 && (view.expectedSide == null || view.expectedSide != view.actualSide ||
+                view.positionId.isNullOrBlank() || view.positionVersion == null || view.positionVersion <= 0))
+            return CopyExitDecision.Stop("仓位方向、身份或版本未确认")
+        if (view.ownedWorkingExitIds.any { it.isBlank() } || view.ownedWorkingEntryId?.isBlank() == true)
+            return CopyExitDecision.Stop("订单身份未确认")
         if (!view.leaderExitConfirmed) return CopyExitDecision.Wait
         view.ownedWorkingEntryId?.let { id ->
             if (view.attributedContracts > 0 && !view.partialEntryCancellationPreservesProtection)
@@ -47,6 +58,6 @@ internal object CopyExitPlanner {
             return if (view.ownedWorkingExitIds.isEmpty()) CopyExitDecision.AlreadyClosed
                 else CopyExitDecision.CancelOwnedExits(view.ownedWorkingExitIds)
         }
-        return CopyExitDecision.CloseCopiedPosition(view.attributedContracts)
+        return CopyExitDecision.CloseCopiedPosition(requireNotNull(view.positionId), requireNotNull(view.positionVersion), view.attributedContracts)
     }
 }

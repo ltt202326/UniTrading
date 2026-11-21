@@ -43,7 +43,7 @@ class TradovateBroker(
         if (credentials.environment == TradovateEnvironment.DEMO) BrokerEnvironment.REMOTE_DEMO else BrokerEnvironment.LIVE)
     override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
         addProtection = false, removeProtection = false, atomicProtectionEdit = false, modifyOrderQuantity = true, ocoProtection = true,
-        tradingDayPnl = true)
+        tradingDayPnl = true, nativeEntryOso = true)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments
@@ -168,6 +168,7 @@ class TradovateBroker(
     private var watched: List<Pair<String, Timeframe>> = emptyList()
     private val watching: Pair<String, Timeframe>? get() = watched.firstOrNull()
     private var quoteWatchSymbols = emptySet<String>()
+    private var copyWatchSymbols = emptySet<String>()
     private var quoteWatchJob: Job? = null
     private val quoteWatchJobs = mutableMapOf<String, Job>()
     private val quoteDiscoverySlots = Semaphore(3)
@@ -252,7 +253,7 @@ class TradovateBroker(
                         publish()
                     }
                 }
-                if (quoteWatchJob?.isActive != true && lock.withLock { quoteWatchSymbols.any { symbol ->
+                if (quoteWatchJob?.isActive != true && lock.withLock { (quoteWatchSymbols + copyWatchSymbols).any { symbol ->
                     quoteWatchJobs[symbol]?.isActive != true && continuousRoutes[symbol]?.let {
                         now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000)
                     } == true
@@ -533,18 +534,24 @@ class TradovateBroker(
         refreshQuoteWatch()
     }
 
+    override fun watchCopyQuotes(symbols: Set<String>) {
+        if (stopped || copyWatchSymbols == symbols) return
+        copyWatchSymbols = symbols.toSet()
+        refreshQuoteWatch()
+    }
+
     private fun refreshQuoteWatch() {
         quoteWatchJob?.cancel()
         quoteWatchJob = scope.launch {
             // Reconcile ownership, keeping retained symbols' in-flight discovery/ranking.
             // Adding or reordering a row must not throw away the other rows' progress.
             lock.withLock {
-                (quoteWatchJobs.keys - quoteWatchSymbols).forEach { quoteWatchJobs.remove(it)?.cancel() }
+                (quoteWatchJobs.keys - (quoteWatchSymbols + copyWatchSymbols)).forEach { quoteWatchJobs.remove(it)?.cancel() }
             }
             if (!marketReady) return@launch
             lock.withLock {
                 if (!marketReady || stopped) return@launch
-                for (symbol in quoteWatchSymbols) if (quoteWatchJobs[symbol]?.isActive != true) {
+                for (symbol in quoteWatchSymbols + copyWatchSymbols) if (quoteWatchJobs[symbol]?.isActive != true) {
                     // Each row advances as soon as its own metadata is ready. Slow searches
                     // do not prevent already-loaded symbols from confirming their leader.
                     quoteWatchJobs[symbol] = scope.launch {
@@ -573,7 +580,7 @@ class TradovateBroker(
 
     /** Called under chartWatchLock; chart and watch-list subscriptions share one owner. */
     private suspend fun syncQuoteSubscriptions(socket: TradovateSocket) {
-        val requested = quoteWatchSymbols + watched.map { it.first }
+        val requested = quoteWatchSymbols + copyWatchSymbols + watched.map { it.first }
         // Quotes only map to loaded specs; an unconfirmed series' last contract waits for its spec.
         val loaded = instruments.filterNot { it.isContinuous }.mapTo(HashSet()) { it.symbol }
         val wanted = (accountFlows.values.flatMap { flow ->
@@ -1686,7 +1693,10 @@ class TradovateBroker(
                 dailyPnl = financials[aid]?.dailyPnl, drawdown = drawdown, copyRevision = revision, copyEpoch = copyEpoch,
                 copyPositionsComplete = identifiable && positions.size == rawPositions.size,
                 // Unknown statuses fail closed; live orders are never inferred from the UI's filtered list.
-                copyOrdersClear = identifiable && orders.all { it.str("ordStatus") in setOf("Filled", "Completed", "Cancelled", "Canceled", "Rejected", "Expired") })
+                copyOrdersClear = identifiable && orders.all { it.str("ordStatus") in setOf("Filled", "Completed", "Cancelled", "Canceled", "Rejected", "Expired") },
+                copyOrdersComplete = identifiable && active.size == pending.size && orders.all {
+                    activeOrder(it) || it.str("ordStatus") in setOf("Filled", "Completed", "Cancelled", "Canceled", "Rejected", "Expired")
+                })
             nextFlows.getOrPut(account.id) { MutableStateFlow(snapshot) }.value = snapshot
         }
         incompleteAccounts = incomplete.toSet()

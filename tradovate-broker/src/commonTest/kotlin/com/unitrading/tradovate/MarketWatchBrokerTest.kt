@@ -170,4 +170,18 @@ class MarketWatchBrokerTest {
         assertEquals("MESZ6", Json.parseToJsonElement(wire.market.bodies.getValue("md/unsubscribequote")).jsonObject.str("symbol"))
         assertTrue(wire.requests.none { it.path.startsWith("order/") })
     }
+
+    @Test fun copyQuotesDoNotReplaceWatchListOrChartOwnership() = runTest {
+        val wire = MockTradovateWire()
+        val extra = Json.parseToJsonElement("""{"id":201,"name":"MESH7","contractMaturityId":300}""")
+        wire.snapshot = JsonObject(wire.snapshot + ("contracts" to JsonArray(wire.snapshot.array("contracts") + extra)))
+        val broker = ready(wire)
+        broker.watchQuotes(setOf("MESZ6")); runCurrent()
+        broker.watchCopyQuotes(setOf("MESH7")); runCurrent()
+        assertEquals(2, wire.market.sent.count { it == "md/subscribequote" })
+        broker.watchCopyQuotes(emptySet()); runCurrent()
+        assertEquals(1, wire.market.sent.count { it == "md/unsubscribequote" })
+        assertEquals("MESH7", Json.parseToJsonElement(wire.market.bodies.getValue("md/unsubscribequote")).jsonObject.str("symbol"))
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
 }

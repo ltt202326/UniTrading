@@ -19,6 +19,8 @@ interface BrokerPlugin {
     suspend fun searchInstruments(query: String) {}
     /** Subscribe an independent quote list without changing the chart or sending trade commands. */
     fun watchQuotes(symbols: Set<String>) {}
+    /** Independent quote ownership for a copy group; replacing it must not clear watch-list or chart subscriptions. */
+    fun watchCopyQuotes(symbols: Set<String>) {}
     fun watch(symbol: String, timeframe: Timeframe) {}
     /**
      * Keeps every chart series in [series] live at once; each call replaces the list. The first is the chart the user is

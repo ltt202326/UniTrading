@@ -32,6 +32,11 @@ internal class CopyOrderJournal(private val store: SnapshotStore) {
         transition(key, requestId) { CopyOrderLinks.uncertain(it) }
     }
 
+    /** Only the caller that has not invoked the broker may record this. It does not authorize an automatic retry. */
+    suspend fun abortedBeforeSend(key: CopyOrderKey, requestId: String): Boolean = mutex.withLock {
+        transition(key, requestId) { it.takeIf { link -> link.status == CopyLinkStatus.INTENDED }?.copy(status = CopyLinkStatus.ABORTED_BEFORE_SEND) }
+    }
+
     private fun transition(key: CopyOrderKey, requestId: String, change: (CopyOrderLink) -> CopyOrderLink?): Boolean {
         if (unreadable) return false
         val index = links.indexOfFirst { it.key == key && it.requestId == requestId }

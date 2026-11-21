@@ -1,14 +1,18 @@
 package com.unitrading.app
 
+import com.unitrading.broker.Side
 import kotlin.test.*
 
 class CopyExitDecisionTest {
     private fun view(leaderExit: Boolean, owned: Int, net: Int = owned, exits: Set<String> = emptySet()) =
-        CopiedTradeExitView(true, leaderExit, true, owned, net, exits, false, true)
+        CopiedTradeExitView(true, leaderExit, true, owned, net, exits, false, true,
+            expectedSide = if (owned > 0) Side.BUY else null, actualSide = if (owned > 0) Side.BUY else null,
+            positionId = if (owned > 0) "position-1" else null, positionVersion = if (owned > 0) 2 else null)
 
     @Test fun leaderExitClosesOnlyTheAttributableFollowerPosition() {
-        assertEquals(CopyExitDecision.CloseCopiedPosition(2), CopyExitPlanner.decide(view(true, 2)))
+        assertEquals(CopyExitDecision.CloseCopiedPosition("position-1", 2, 2), CopyExitPlanner.decide(view(true, 2)))
         assertIs<CopyExitDecision.Stop>(CopyExitPlanner.decide(view(true, 2, net = 3)))
+        assertIs<CopyExitDecision.Stop>(CopyExitPlanner.decide(view(true, 2).copy(actualSide = Side.SELL)))
     }
 
     @Test fun followerAlreadyStoppedOutDoesNotGetASecondExit() {
