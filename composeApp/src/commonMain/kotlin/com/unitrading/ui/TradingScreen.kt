@@ -1242,7 +1242,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
                             },
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
-                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
+                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle, watermark = if (desktopStyle) chartPreferences.watermark else "HIDDEN",
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
                                 scope.launch { runtime.chartPreferences.savePriceAxis() }
@@ -2207,7 +2207,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 if (desktop && showSettings) {
                     Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }) {
-                        Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Surface) {
+                        Surface(Modifier.widthIn(max = 760.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Surface) {
                             if (showActivity) {
                                 ActivityLogPage("$loginName · $accountName", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
@@ -2215,7 +2215,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates)
+                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates, desktopLayout = true)
                         }
                     }
                 }

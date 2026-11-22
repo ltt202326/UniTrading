@@ -53,6 +53,7 @@ data class ChartPreferences(
     /** Whether historical fills and trade markers are shown on charts. */
     val showHistory: Boolean = true,
     val priceAxis: PriceAxisSettings = PriceAxisSettings(),
+    val watermark: String = "SYMBOL_TIMEFRAME",
 ) {
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
@@ -61,6 +62,7 @@ data class ChartPreferences(
     private fun minutes(value: Int): Int = if (value in 1..Timeframe.MAX_SECONDS / Timeframe.MINUTE) value * Timeframe.MINUTE else -1
 
     fun validate() {
+        require(watermark in setOf("SYMBOL_TIMEFRAME", "SYMBOL", "HIDDEN")) { "水印设置无效" }
         require((favoriteLengths + customLengths + listOfNotNull(lastLength)).all { it in 1..Timeframe.MAX_SECONDS }) { "周期超出范围" }
         require(favoriteLengths.distinct() == favoriteLengths && customLengths.distinct() == customLengths) { "周期重复" }
         require(favoriteLengths.size <= MAX_FAVORITES) { "收藏周期最多 $MAX_FAVORITES 个" }
@@ -166,6 +168,10 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setLegendCollapsed(collapsed: Boolean): Boolean = saveMutex.withLock {
         preferences.value.legendCollapsed == collapsed || persist(preferences.value.copy(legendCollapsed = collapsed))
+    }
+
+    suspend fun setWatermark(value: String): Boolean = saveMutex.withLock {
+        persist(preferences.value.copy(watermark = value))
     }
 
     suspend fun setChartLegendCollapsed(chartId: String, collapsed: Boolean): Boolean = saveMutex.withLock {

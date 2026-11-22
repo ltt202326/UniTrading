@@ -54,10 +54,12 @@ internal fun SettingsPage(
     onConnectRithmic: (() -> Unit)? = null,
     barActions: @Composable RowScope.() -> Unit = {},
     updates: AppUpdates? = null,
+    desktopLayout: Boolean = false,
 ) {
     val colors = TradingColors
     val scheme = MaterialTheme.colorScheme
     val theme by runtime.theme.settings.collectAsState()
+    val chartPreferences by runtime.chartPreferences.preferences.collectAsState()
     val tradingPreferences by runtime.tradingPreferences.preferences.collectAsState()
     val savingTradingPreferences by runtime.tradingPreferences.saving.collectAsState()
     val tradingPreferencesError by runtime.tradingPreferences.error.collectAsState()
@@ -76,15 +78,26 @@ internal fun SettingsPage(
     var accountsExpanded by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
     var chooseOrderLayout by remember { mutableStateOf(false) }
+    var category by rememberSaveable { mutableStateOf("账户与连接") }
+    fun show(name: String) = !desktopLayout || category == name
 
     Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
             barActions()
             if (onClose != null) ActionIcon(AppIcons.Close, "关闭设置", "close-settings", onClick = onClose)
         })
-        Column(Modifier.weight(1f).verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+        Row(Modifier.weight(1f).fillMaxWidth()) {
+            if (desktopLayout) Column(Modifier.width(160.dp).fillMaxHeight().padding(start = 12.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf("账户与连接", "交易", "外观与图表").forEach { item ->
+                    Surface(onClick = { category = item }, modifier = Modifier.fillMaxWidth().testTag("settings-category-$item"),
+                        shape = MaterialTheme.shapes.medium, color = if (category == item) scheme.secondaryContainer else Color.Transparent) {
+                        Text(item, Modifier.padding(horizontal = 12.dp, vertical = 14.dp), style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+        Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)) {
-            SettingsSection("账户与连接") {
+            if (show("账户与连接")) SettingsSection("账户与连接") {
                 val ready = market.connected && market.tradingReady
                 val status = if (localDemo) { if (paused) "模拟已暂停" else "模拟运行中" }
                     else if (!market.connected) "已断开" else if (ready) "已连接" else "交易未就绪"
@@ -113,7 +126,7 @@ internal fun SettingsPage(
                 if (!localDemo) SettingsRow("断开 $loginName", if (loginSaved) "断开当前连接，保留本机登录" else "断开当前连接；这个登录未保存，本机分析缓存一并清除", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
             }
 
-            SettingsSection("交易") {
+            if (show("交易")) SettingsSection("交易") {
                 SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
@@ -163,7 +176,7 @@ internal fun SettingsPage(
 
             // The rules of the selected trading child, kept apart from the preferences that apply to every account.
             val tradingChild = account?.takeUnless { it.readOnly }
-            if (riskUnreadable || tradingChild != null) SettingsSection("子账户风控") {
+            if (show("交易") && (riskUnreadable || tradingChild != null)) SettingsSection("子账户风控") {
                 // An unreadable rule file pauses every account of every login, so the way out shows whichever account is selected.
                 AccountRiskRecovery(runtime.accountRisk, busy)
                 if (tradingChild != null) {
@@ -173,7 +186,18 @@ internal fun SettingsPage(
                 }
             }
 
-            SettingsSection("外观与图表") {
+            if (show("外观与图表")) SettingsSection("外观与图表") {
+                if (desktopLayout) {
+                    Text("商品代码水印", Modifier.padding(start = 16.dp, top = 12.dp), style = MaterialTheme.typography.labelLarge)
+                    listOf("SYMBOL_TIMEFRAME" to "商品代码与周期", "SYMBOL" to "仅商品代码", "HIDDEN" to "隐藏水印").forEach { (value, label) ->
+                        Row(Modifier.fillMaxWidth().selectable(chartPreferences.watermark == value, role = Role.RadioButton) {
+                            preferenceScope.launch { runtime.chartPreferences.setWatermark(value) }
+                        }.padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(chartPreferences.watermark == value, onClick = null)
+                            Text(label, Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
                 SettingsRow("外观与主题", "${theme.preset.label} · ${if (theme.colors.isEmpty()) "默认配色" else "自定义配色"}",
                     AppIcons.Palette, "open-theme", onTheme, navigates = true) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -182,23 +206,24 @@ internal fun SettingsPage(
                 }
             }
 
-            if (notificationsAvailable) SettingsSection("通知") { LivePnlSwitch(runtime.livePnl) }
+            if (show("交易") && notificationsAvailable) SettingsSection("通知") { LivePnlSwitch(runtime.livePnl) }
 
-            SettingsSection("记录") {
+            if (show("交易")) SettingsSection(if (desktopLayout) "活动记录" else "记录") {
                 SettingsRow("活动记录", "查看当前账户的交易与操作记录", AppIcons.History, "open-activity", onActivity, navigates = true)
             }
 
-            if (runtime.savedLogins.available) SettingsSection("已保存的登录") {
+            if (show("账户与连接") && runtime.savedLogins.available) SettingsSection("已保存的登录") {
                 SavedLoginControls(runtime, grouped = true, onForgotten = onForgotten)
             }
 
-            if (localDemo) SettingsSection("本地模拟") {
+            if (show("账户与连接") && localDemo) SettingsSection("本地模拟") {
                 SettingsRow(if (paused) "继续模拟行情" else "暂停模拟行情", "模拟时间每秒推进 15 秒", if (paused) AppIcons.PlayArrow else AppIcons.Pause,
                     "settings-pause-demo", { runtime.paused.value = !paused })
                 SettingsRow("重置所有模拟账户", "清空本地模拟交易并恢复初始资金", AppIcons.DeleteSweep, "settings-reset-demo", onReset, destructive = true)
             }
 
-            if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
+            if (show("账户与连接") && updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
+        }
         }
     }
     if (chooseOrderLayout) AlertDialog(

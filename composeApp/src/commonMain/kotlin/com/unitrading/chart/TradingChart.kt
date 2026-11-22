@@ -725,6 +725,11 @@ fun TradingChart(
                         text(axisTimeLabel(visible[index].timeMs, timeframe), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
                     }
                     clipRect(left, top, right, plotBottom) {
+                    if (chrome.watermark != "HIDDEN") {
+                        val label = if (chrome.watermark == "SYMBOL") instrument.symbol else "${instrument.symbol} · ${timeframe.label}"
+                        val mark = textMeasurer.measure(label, TextStyle(color = colors.Muted.copy(alpha = .12f), fontSize = 36.sp))
+                        drawText(mark, topLeft = Offset((left + right - mark.size.width) / 2f, (top + plotBottom - mark.size.height) / 2f))
+                    }
                     if (activeDraft != null && draftEntry != null) {
                         val entryY = scale.y(draftEntry)
                         listOf(activeDraft.stopLoss to colors.Down, activeDraft.takeProfit to colors.Up).forEach { (price, color) ->
@@ -1041,6 +1046,7 @@ class ChartChrome(
     val desktopAxisStyle: Boolean? = null,
     val tabletCompactAxis: Boolean = false,
     val showNavigation: Boolean = true,
+    val watermark: String = "HIDDEN",
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */
