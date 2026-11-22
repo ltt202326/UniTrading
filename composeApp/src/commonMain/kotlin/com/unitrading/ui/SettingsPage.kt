@@ -79,8 +79,10 @@ internal fun SettingsPage(
     val scroll = rememberScrollState()
     var chooseOrderLayout by remember { mutableStateOf(false) }
     var category by rememberSaveable { mutableStateOf("账户与连接") }
+    var watermarkMenu by remember { mutableStateOf(false) }
     fun show(name: String) = !desktopLayout || category == name
 
+    CompositionLocalProvider(LocalDesktopSettings provides desktopLayout) {
     Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
             barActions()
@@ -197,13 +199,27 @@ internal fun SettingsPage(
                             Text(title, Modifier.padding(start = 8.dp))
                         }
                     }
-                    Text("商品代码水印", Modifier.padding(start = 16.dp, top = 12.dp), style = MaterialTheme.typography.labelLarge)
-                    listOf("SYMBOL_TIMEFRAME" to "商品代码与周期", "SYMBOL" to "仅商品代码", "HIDDEN" to "隐藏水印").forEach { (value, label) ->
-                        Row(Modifier.fillMaxWidth().selectable(chartPreferences.watermark == value, role = Role.RadioButton) {
-                            preferenceScope.launch { runtime.chartPreferences.setWatermark(value) }
-                        }.padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(chartPreferences.watermark == value, onClick = null)
-                            Text(label, Modifier.padding(start = 8.dp))
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = scheme.outlineVariant)
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("水印", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        Box {
+                            OutlinedButton(onClick = { watermarkMenu = true }, modifier = Modifier.widthIn(min = 190.dp).testTag("watermark-menu")) {
+                                Text(when (chartPreferences.watermark) { "HIDDEN" -> "隐藏"; "SYMBOL" -> "商品代码"; "TIMEFRAME" -> "周期"; else -> "商品代码 · 周期" }, Modifier.weight(1f))
+                                Icon(AppIcons.ExpandMore, contentDescription = null)
+                            }
+                            DropdownMenu(expanded = watermarkMenu, onDismissRequest = { watermarkMenu = false }) {
+                                val selectedSymbol = chartPreferences.watermark == "SYMBOL" || chartPreferences.watermark == "SYMBOL_TIMEFRAME"
+                                val selectedPeriod = chartPreferences.watermark == "TIMEFRAME" || chartPreferences.watermark == "SYMBOL_TIMEFRAME"
+                                listOf("商品代码" to selectedSymbol, "周期" to selectedPeriod).forEach { (label, checked) ->
+                                    DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked, onCheckedChange = null); Text(label, Modifier.padding(start = 8.dp)) } },
+                                        onClick = {
+                                            val symbol = if (label == "商品代码") !selectedSymbol else selectedSymbol
+                                            val period = if (label == "周期") !selectedPeriod else selectedPeriod
+                                            val value = if (symbol && period) "SYMBOL_TIMEFRAME" else if (symbol) "SYMBOL" else if (period) "TIMEFRAME" else "HIDDEN"
+                                            preferenceScope.launch { runtime.chartPreferences.setWatermark(value) }
+                                        })
+                                }
+                            }
                         }
                     }
                 }
@@ -234,6 +250,7 @@ internal fun SettingsPage(
             if (show("账户与连接") && updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
         }
         }
+    }
     }
     if (chooseOrderLayout) AlertDialog(
         onDismissRequest = { if (!savingTradingPreferences) chooseOrderLayout = false },
@@ -290,11 +307,13 @@ internal fun keyboardTradingSummary(preferences: TradingPreferences, brackets: A
 @Composable
 private fun settingsRowColors() = ListItemDefaults.colors(containerColor = Color.Transparent)
 
+private val LocalDesktopSettings = staticCompositionLocalOf { false }
+
 @Composable
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, Modifier.padding(start = 16.dp).semantics { heading() }, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-        Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
+        Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, color = if (LocalDesktopSettings.current) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainer) {
             Column(content = content)
         }
     }

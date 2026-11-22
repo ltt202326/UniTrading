@@ -38,6 +38,18 @@ class OrderLinesTest {
         assertTrue(lines.any { it.edit is EditableLine.Draft && it.price == 108_500L })
     }
 
+    @Test fun desktopDraftOffersSubmitAndQuantityButPhoneKeepsItsOriginalControls() {
+        val draft = OrderRequest("MESZ6", Side.SELL, OrderKind.MARKET, 100)
+        fun line(options: OrderLineOptions) = orderLines(mes, emptyList(), null, emptyList(), draft,
+            OrderPreview(5_500_000_000), 5_500_000_000, null, options).single()
+        val desktop = line(all.copy(directDraftSubmit = true, inlineDraftQuantity = true))
+        assertEquals(LineAction.SubmitDraft, desktop.cells.first().action)
+        assertTrue(desktop.cells.any { it.action == LineAction.EditDraftQuantity })
+        val phone = line(all)
+        assertNull(phone.cells.first().action)
+        assertFalse(phone.cells.any { it.action == LineAction.EditDraftQuantity })
+    }
+
     @Test fun aValidDraftEstimateIsShownAsTheBrokerGaveIt() {
         val draft = OrderRequest("MESZ6", Side.SELL, OrderKind.MARKET, 200, stopLoss = 5_510_000_000)
         val preview = OrderPreview(5_500_000_000, stopLossPnlMicros = -123_450_000)

@@ -1,6 +1,10 @@
 package com.unitrading.chart
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.focusable
@@ -295,7 +299,7 @@ fun TradingChart(
     val draftEntry = activeDraft?.let { it.entryPrice ?: activePreview?.entryPrice ?: quote?.let { q -> if (it.side == Side.BUY) q.ask else q.bid } }
     val lines = orderLines(instrument, positions, selectedPosition, orders, activeDraft, activePreview, draftEntry, drag,
         OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection, actions.addProtection, actions.removeProtection,
-            actions.addPositionProtection, actions.draftStopManaged, actions.draftTargetManaged), quote)
+            actions.addPositionProtection, actions.draftStopManaged, actions.draftTargetManaged, actions.directDraftSubmit, actions.inlineDraftQuantity), quote)
     val currentLines by rememberUpdatedState(lines)
     drawingLayer?.bindChart(
         orderLineAt = { point -> currentLines.any { it.edit != null && abs(currentScale.y(it.price) - point.y) <= 8 * density.density } },
@@ -726,7 +730,7 @@ fun TradingChart(
                     }
                     clipRect(left, top, right, plotBottom) {
                     if (chrome.watermark != "HIDDEN") {
-                        val label = if (chrome.watermark == "SYMBOL") instrument.symbol else "${instrument.symbol} · ${timeframe.label}"
+                        val label = when (chrome.watermark) { "SYMBOL" -> instrument.symbol; "TIMEFRAME" -> timeframe.label; else -> "${instrument.symbol} · ${timeframe.label}" }
                         val mark = textMeasurer.measure(label, TextStyle(color = colors.Muted.copy(alpha = .12f), fontSize = 36.sp))
                         drawText(mark, topLeft = Offset((left + right - mark.size.width) / 2f, (top + plotBottom - mark.size.height) / 2f))
                     }
@@ -878,6 +882,17 @@ fun TradingChart(
                         drawText(tip, topLeft = Offset(tipLeft + labelPadding, tipTop + labelPadding))
                     }
                 }
+                if (actions.inlineDraftQuantity) orderTags.firstOrNull { it.line.preview && it.cells.any { cell -> cell.cell.action == LineAction.EditDraftQuantity } }
+                    ?.cells?.firstOrNull { it.cell.action == LineAction.EditDraftQuantity }?.let { placed ->
+                        var textValue by remember(accountKey, instrument.symbol) { mutableStateOf(actions.draftQuantity) }
+                        BasicTextField(value = textValue, onValueChange = { value ->
+                            if (value.length <= 8 && value.all(Char::isDigit)) { textValue = value; actions.onDraftQuantity(value) }
+                        }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            textStyle = labelStyle.copy(color = colors.Ink, textAlign = TextAlign.Center),
+                            modifier = Modifier.offset(x = with(density) { placed.bounds.left.toDp() }, y = with(density) { placed.bounds.top.toDp() })
+                                .size(width = with(density) { placed.bounds.width.toDp() }, height = with(density) { placed.bounds.height.toDp() })
+                                .background(colors.Surface).testTag("chart-draft-quantity"))
+                    }
                 Box(Modifier.align(if (mobilePlatform) {
                     if (axis.left) Alignment.TopStart else Alignment.TopEnd
                 } else {

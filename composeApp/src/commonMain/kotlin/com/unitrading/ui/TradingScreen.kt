@@ -1071,6 +1071,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             if (sizeByRisk && action.stop) draft.withProtectionPrice(true, "")
                             else draft.withProtectionEnabled(instrument, quote, action.stop, false)
                         )
+                        LineAction.SubmitDraft -> {
+                            val order = request
+                            if (order == null || preview?.valid != true) showNotice(preview?.errors?.firstOrNull() ?: "订单参数无效，请检查数量与报价", attention = true)
+                            else executeTrade(Confirmation.Place(order, fromChart = true))
+                        }
+                        LineAction.EditDraftQuantity -> Unit
                         LineAction.CloseDraft -> if (compact) closeOrder() else showDraft = false
                     }
                 }
@@ -1185,6 +1191,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onPendingProtection = { order, sl, tp -> onActive { editPendingProtection(order, sl, tp, fromChart = true) } },
                         onProtection = { p, sl, tp -> onActive { editProtection(p, sl, tp, fromChart = true) } },
                         onLineAction = { action -> onActive { runLineAction(action) } },
+                        draftQuantity = draft.quantity,
+                        onDraftQuantity = { value -> onActive { changeDraft(draft.copy(quantity = value.ifBlank { "1" })) } },
+                        inlineDraftQuantity = nativeDesktop && !sizeByRisk,
+                        directDraftSubmit = nativeDesktop,
                         addProtection = plugin.capabilities.addProtection,
                         addPositionProtection = plugin.capabilities.addPositionProtection,
                         removeProtection = plugin.capabilities.removeProtection,
@@ -2208,8 +2218,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                 }
                 if (desktop && showSettings) {
-                    Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }) {
-                        Surface(Modifier.widthIn(max = 760.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Surface) {
+                    Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+                        Surface(Modifier.widthIn(max = 860.dp).fillMaxWidth(.92f).fillMaxHeight(.82f), shape = MaterialTheme.shapes.extraLarge, color = colors.Surface) {
                             if (showActivity) {
                                 ActivityLogPage("$loginName · $accountName", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())

@@ -65,7 +65,7 @@ data class ChartPreferences(
     private fun minutes(value: Int): Int = if (value in 1..Timeframe.MAX_SECONDS / Timeframe.MINUTE) value * Timeframe.MINUTE else -1
 
     fun validate() {
-        require(watermark in setOf("SYMBOL_TIMEFRAME", "SYMBOL", "HIDDEN")) { "水印设置无效" }
+        require(watermark in setOf("SYMBOL_TIMEFRAME", "SYMBOL", "TIMEFRAME", "HIDDEN")) { "水印设置无效" }
         require((favoriteLengths + customLengths + listOfNotNull(lastLength)).all { it in 1..Timeframe.MAX_SECONDS }) { "周期超出范围" }
         require(favoriteLengths.distinct() == favoriteLengths && customLengths.distinct() == customLengths) { "周期重复" }
         require(favoriteLengths.size <= MAX_FAVORITES) { "收藏周期最多 $MAX_FAVORITES 个" }
