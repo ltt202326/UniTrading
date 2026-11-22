@@ -13,6 +13,7 @@ import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 import com.unitrading.chart.PriceScale
+import com.unitrading.chart.OrderTagButtons
 import com.unitrading.chart.drawing.DrawingTool
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
@@ -332,6 +333,37 @@ class ChartContextMenuUiTest {
         compose.onNodeWithTag("cancel-order-review").performClick()
         compose.onNodeWithTag("confirm-action").assertDoesNotExist()
         assertTrue(broker.placed.isEmpty(), "Reviewing or cancelling an invalid order must never send it")
+    }
+
+    private fun draftSubmit() {
+        val bounds = chart().fetchSemanticsNode().config[OrderTagButtons]
+        val at = assertNotNull(bounds["提交买入订单"]).center
+        chart().performMouseInput { click(at) }
+        compose.waitForIdle()
+    }
+
+    @Test fun draftButtonHonoursConfirmationAndQuantity() {
+        render()
+        rightClick(549_000)
+        item("BUY-LIMIT").performClick()
+        compose.onNodeWithTag("chart-draft-quantity").performTextReplacement("2")
+        draftSubmit()
+        compose.onNodeWithTag("confirm-action").assertExists()
+        assertTrue(broker.placed.isEmpty())
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.waitUntil(5000) { broker.placed.size == 1 }
+        assertEquals(200L, broker.placed.single().lotsHundredths)
+    }
+
+    @Test fun draftButtonSendsWithoutConfirmationOnlyWhenPreferenceEnabled() {
+        render(skipConfirmation = true)
+        rightClick(549_000)
+        item("BUY-LIMIT").performClick()
+        compose.onNodeWithTag("chart-draft-quantity").performTextReplacement("")
+        draftSubmit()
+        compose.waitUntil(5000) { broker.placed.size == 1 }
+        assertEquals(100L, broker.placed.single().lotsHundredths)
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
     }
 
     @Test fun underTheMarketItOffersABuyLimitAndASellStopAndTheOrderWaitsForTheConfirmation() {
