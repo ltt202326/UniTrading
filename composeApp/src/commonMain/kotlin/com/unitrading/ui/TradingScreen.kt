@@ -355,10 +355,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val orderActive = orderPanelState != MobileOrderPanelState.CLOSED
         var busy by remember { mutableStateOf(false) }
         var flattenReview by remember { mutableStateOf<FlattenReview?>(null) }
+        var timedLockTarget by remember { mutableStateOf<FlattenTarget?>(null) }
+        var timedLockMinutes by remember { mutableStateOf("60") }
         var flattenResults by remember { mutableStateOf<List<FlattenOutcome>?>(null) }
         var flattening by remember { mutableStateOf(false) }
         // A detached window must not change the account behind another window's pending order or edit.
-        fun accountOperationPending() = busy || confirmation != null || flattenReview != null || flattening || flattenResults != null ||
+        fun accountOperationPending() = busy || confirmation != null || timedLockTarget != null || flattenReview != null || flattening || flattenResults != null ||
             protection != null || pendingEdit != null || pendingProtection != null || standaloneEdit != null
         /** The window the user last worked in: null for the main window, else the key of a window that holds part of the workspace. */
         var activeWindow by remember { mutableStateOf<String?>(null) }
@@ -1252,7 +1254,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
                             },
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
-                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle, watermark = if (desktopStyle) chartPreferences.watermark else "HIDDEN",
+                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle, watermark = if (desktopStyle) chartPreferences.watermark else "HIDDEN", timeZone = if (desktopStyle) chartPreferences.chartTimeZone else "Asia/Shanghai",
+                            marketSession = market.sessionStates[shownInstrument.symbol].takeIf { market.marketDataConnected },
                             candleBody = !desktopStyle || chartPreferences.candleBody, candleBorder = desktopStyle && chartPreferences.candleBorder,
                             candleWick = !desktopStyle || chartPreferences.candleWick,
                             priceAxis = priceAxis, onPriceAxis = { value ->
@@ -1472,6 +1475,31 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         },
                         dismissButton = { TextButton({ confirmation = null }, enabled = !busy) { Text("取消") } },
                     )
+                }
+                timedLockTarget?.let { target ->
+                    AlertDialog(onDismissRequest = { if (!busy) timedLockTarget = null },
+                        title = { Text("锁定此子账户") },
+                        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("${target.account.name} · 锁定后将撤销挂单并平仓；本设备阻止新增仓位。到期以券商最新报价时间为准。")
+                            OutlinedTextField(timedLockMinutes, { value -> if (value.length <= 5 && value.all(Char::isDigit)) timedLockMinutes = value },
+                                label = { Text("锁定时长（分钟，1–10080）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("timed-lock-minutes"))
+                            Text("断线或平仓未确认时，请核对券商账户。其他设备不受本机锁定控制。", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                        } },
+                        confirmButton = { TextButton(onClick = {
+                            val minutes = timedLockMinutes.toLongOrNull()
+                            if (minutes == null || minutes !in 1..10080) showNotice("请输入 1 到 10080 分钟。", attention = true)
+                            else {
+                                timedLockTarget = null; busy = true; flattening = true
+                                scope.launch {
+                                    try {
+                                        val error = runtime.accountRisk.lockFor(target.broker, target.account, minutes * 60_000L)
+                                        if (error != null) showNotice(error, attention = true)
+                                        else flattenResults = runtime.accountRisk.flattenAccounts(registry, listOf(target))
+                                    } finally { flattening = false; busy = false }
+                                }
+                            }
+                        }, enabled = !busy, modifier = Modifier.testTag("confirm-timed-lock")) { Text("锁定并平仓") } },
+                        dismissButton = { TextButton(onClick = { timedLockTarget = null }, enabled = !busy) { Text("取消") } })
                 }
                 flattenReview?.let { review ->
                     FlattenConfirmation(review, onCancel = { flattenReview = null }) {
@@ -1744,6 +1772,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .6f))
                                     val shape = RoundedCornerShape(7.dp)
                                     val outline = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    if (nativeDesktop) OutlinedButton(onClick = {
+                                        if (targetSession != null && selectionStillCurrent()) {
+                                            timedLockMinutes = "60"
+                                            timedLockTarget = FlattenTarget(plugin, targetSession.account)
+                                        }
+                                    }, modifier = Modifier.height(36.dp).testTag("lock-selected-account"),
+                                        enabled = accountActionsReady && targetSession != null && !targetSession.account.readOnly,
+                                        shape = shape, border = outline, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("锁定此子账户", maxLines = 1) }
                                     OutlinedButton(onClick = {
                                         if (!accountOperationPending() &&
                                             targetSession != null && selectionStillCurrent())

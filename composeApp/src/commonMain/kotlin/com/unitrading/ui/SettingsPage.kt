@@ -80,6 +80,7 @@ internal fun SettingsPage(
     var chooseOrderLayout by remember { mutableStateOf(false) }
     var category by rememberSaveable { mutableStateOf("账户与连接") }
     var watermarkMenu by remember { mutableStateOf(false) }
+    var timeZoneMenu by remember { mutableStateOf(false) }
     fun show(name: String) = !desktopLayout || category == name
 
     CompositionLocalProvider(LocalDesktopSettings provides desktopLayout) {
@@ -90,7 +91,7 @@ internal fun SettingsPage(
         })
         Row(Modifier.weight(1f).fillMaxWidth()) {
             if (desktopLayout) Column(Modifier.width(160.dp).fillMaxHeight().padding(start = 12.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf("账户与连接", "交易", "外观与图表").forEach { item ->
+                listOf("账户与连接", "交易", "外观与图表", "关于与更新").forEach { item ->
                     Surface(onClick = { category = item }, modifier = Modifier.fillMaxWidth().testTag("settings-category-$item"),
                         shape = MaterialTheme.shapes.medium, color = if (category == item) scheme.secondaryContainer else Color.Transparent) {
                         Text(item, Modifier.padding(horizontal = 12.dp, vertical = 14.dp), style = MaterialTheme.typography.labelLarge)
@@ -190,20 +191,33 @@ internal fun SettingsPage(
 
             if (show("外观与图表")) SettingsSection("外观与图表") {
                 if (desktopLayout) {
-                    Text("K 线显示", Modifier.padding(start = 16.dp, top = 12.dp), style = MaterialTheme.typography.labelLarge)
+                    Text("K 线", Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp), color = colors.Muted, style = MaterialTheme.typography.labelMedium)
                     listOf(Triple("body", "主体", chartPreferences.candleBody), Triple("border", "边框", chartPreferences.candleBorder), Triple("wick", "影线", chartPreferences.candleWick)).forEach { (key, title, selected) ->
                         Row(Modifier.fillMaxWidth().toggleable(selected, role = Role.Checkbox) { enabled ->
                             preferenceScope.launch { runtime.chartPreferences.setCandlePart(key, enabled) }
-                        }.padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        }.padding(horizontal = 16.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(selected, onCheckedChange = null)
                             Text(title, Modifier.padding(start = 8.dp))
                         }
                     }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("时区", Modifier.width(100.dp), maxLines = 1, style = MaterialTheme.typography.bodyMedium)
+                        Box {
+                            OutlinedButton(onClick = { timeZoneMenu = true }, shape = MaterialTheme.shapes.small, modifier = Modifier.widthIn(min = 190.dp).testTag("chart-time-zone")) {
+                                Text(chartPreferences.chartTimeZone, Modifier.weight(1f)); Icon(AppIcons.ExpandMore, null)
+                            }
+                            DropdownMenu(timeZoneMenu, onDismissRequest = { timeZoneMenu = false }) {
+                                listOf("Asia/Shanghai" to "上海 UTC+8", "America/New_York" to "纽约", "America/Chicago" to "芝加哥", "UTC" to "UTC").forEach { (zone, label) ->
+                                    DropdownMenuItem(text = { Text(label) }, onClick = { timeZoneMenu = false; preferenceScope.launch { runtime.chartPreferences.setChartTimeZone(zone) } })
+                                }
+                            }
+                        }
+                    }
                     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = scheme.outlineVariant)
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("水印", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        Text("水印", Modifier.width(100.dp), maxLines = 1, style = MaterialTheme.typography.bodyMedium)
                         Box {
-                            OutlinedButton(onClick = { watermarkMenu = true }, modifier = Modifier.widthIn(min = 190.dp).testTag("watermark-menu")) {
+                            OutlinedButton(onClick = { watermarkMenu = true }, modifier = Modifier.widthIn(min = 190.dp, max = 260.dp).testTag("watermark-menu"), shape = MaterialTheme.shapes.small) {
                                 Text(when (chartPreferences.watermark) { "HIDDEN" -> "隐藏"; "SYMBOL" -> "商品代码"; "TIMEFRAME" -> "周期"; else -> "商品代码 · 周期" }, Modifier.weight(1f))
                                 Icon(AppIcons.ExpandMore, contentDescription = null)
                             }
@@ -223,7 +237,7 @@ internal fun SettingsPage(
                         }
                     }
                 }
-                SettingsRow("外观与主题", "${theme.preset.label} · ${if (theme.colors.isEmpty()) "默认配色" else "自定义配色"}",
+                SettingsRow("主题配色", "${theme.preset.label} · ${if (theme.colors.isEmpty()) "默认配色" else "自定义配色"}",
                     AppIcons.Palette, "open-theme", onTheme, navigates = true) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         listOf(colors.Accent, colors.Up, colors.Down).forEach { Box(Modifier.size(12.dp).background(it, CircleShape)) }
@@ -247,7 +261,7 @@ internal fun SettingsPage(
                 SettingsRow("重置所有模拟账户", "清空本地模拟交易并恢复初始资金", AppIcons.DeleteSweep, "settings-reset-demo", onReset, destructive = true)
             }
 
-            if (show("账户与连接") && updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
+            if ((!desktopLayout || category == "关于与更新") && updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
         }
         }
     }

@@ -160,6 +160,7 @@ fun TradingChart(
     var showObjectTree by remember { mutableStateOf(false) }
     var showTemplates by remember { mutableStateOf(false) }
     var showChartSettings by remember { mutableStateOf(false) }
+    var quantityMenu by remember { mutableStateOf(false) }
     val closeIcon = rememberVectorPainter(AppIcons.Close)
     val density = LocalDensity.current
     val axis = chrome.priceAxis
@@ -421,7 +422,7 @@ fun TradingChart(
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text(chartBarDateTime(c.timeMs, timeframe), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
+                        Text(chartBarDateTime(c.timeMs, timeframe, chrome.timeZone), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
                         Text("开 ${instrument.formatPrice(c.open)}    高 ${instrument.formatPrice(c.high)}\n低 ${instrument.formatPrice(c.low)}    收 ${instrument.formatPrice(c.close)}" +
                             (c.volume?.let { "    量 ${formatVolume(it)}" } ?: ""), style = MaterialTheme.typography.bodySmall)
                     }
@@ -589,7 +590,8 @@ fun TradingChart(
                             detectTapGestures(onTap = { point ->
                                 val button = currentTags.buttonAt(point, if (compact) 8 * density.density else 0f)
                                 if (button != null) {
-                                    button.cell.action?.let(currentActions.onLineAction)
+                                    if (button.cell.action == LineAction.EditDraftQuantity) quantityMenu = true
+                                    else button.cell.action?.let(currentActions.onLineAction)
                                     return@detectTapGestures
                                 }
                                 val bars = currentVisible
@@ -726,7 +728,7 @@ fun TradingChart(
                         val index = ((visible.size - 1) * i / 4)
                         val x = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
                         drawLine(colors.Grid, Offset(x, top), Offset(x, bottom), 1f)
-                        text(axisTimeLabel(visible[index].timeMs, timeframe), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
+                        text(axisTimeLabel(visible[index].timeMs, timeframe, chrome.timeZone), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
                     }
                     clipRect(left, top, right, plotBottom) {
                     if (chrome.watermark != "HIDDEN") {
@@ -857,7 +859,7 @@ fun TradingChart(
                         val dash = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
                         val line = colors.Ink.copy(alpha = if (drawingLayer?.showsCrosshairLines != false) .55f else 0f)
                         drawLine(line, Offset(x, top), Offset(x, bottom), 1f, pathEffect = dash)
-                        val timeLabel = crosshairTimeLabel(slotTimeMs, timeframe)
+                        val timeLabel = crosshairTimeLabel(slotTimeMs, timeframe, chrome.timeZone)
                         val timeWidth = textMeasurer.measure(timeLabel, labelStyle).size.width + labelPadding * 2
                         val timeLeft = (x - timeWidth / 2).coerceIn(left, maxOf(left, right - timeWidth))
                         drawRect(colors.Ink, Offset(timeLeft, bottom + 1f), Size(timeWidth, lineHeight))
@@ -884,14 +886,24 @@ fun TradingChart(
                 }
                 if (actions.inlineDraftQuantity) orderTags.firstOrNull { it.line.preview && it.cells.any { cell -> cell.cell.action == LineAction.EditDraftQuantity } }
                     ?.cells?.firstOrNull { it.cell.action == LineAction.EditDraftQuantity }?.let { placed ->
-                        var textValue by remember(accountKey, instrument.symbol) { mutableStateOf(actions.draftQuantity) }
-                        BasicTextField(value = textValue, onValueChange = { value ->
-                            if (value.length <= 8 && value.all(Char::isDigit)) { textValue = value; actions.onDraftQuantity(value) }
-                        }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            textStyle = labelStyle.copy(color = colors.Ink, textAlign = TextAlign.Center),
-                            modifier = Modifier.offset(x = with(density) { placed.bounds.left.toDp() }, y = with(density) { placed.bounds.top.toDp() })
-                                .size(width = with(density) { placed.bounds.width.toDp() }, height = with(density) { placed.bounds.height.toDp() })
-                                .background(colors.Surface).testTag("chart-draft-quantity"))
+                        Box(Modifier.offset(x = with(density) { placed.bounds.left.toDp() }, y = with(density) { placed.bounds.bottom.toDp() })) {
+                            DropdownMenu(expanded = quantityMenu, onDismissRequest = { quantityMenu = false }) {
+                                var textValue by remember(accountKey, instrument.symbol, quantityMenu) { mutableStateOf(actions.draftQuantity) }
+                                Column(Modifier.width(220.dp).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("订单大小", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                                        IconButton(onClick = { quantityMenu = false }, modifier = Modifier.size(28.dp)) {
+                                            Icon(AppIcons.Close, contentDescription = "关闭", modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                    OutlinedTextField(value = textValue, onValueChange = { value ->
+                                        if (value.length <= 8 && value.all(Char::isDigit)) { textValue = value; actions.onDraftQuantity(value) }
+                                    }, label = { Text("数量（${instrument.quantityUnit}）") }, singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        textStyle = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().testTag("chart-draft-quantity"))
+                                }
+                            }
+                        }
                     }
                 Box(Modifier.align(if (mobilePlatform) {
                     if (axis.left) Alignment.TopStart else Alignment.TopEnd
@@ -899,9 +911,9 @@ fun TradingChart(
                     if (axis.left) Alignment.BottomStart else Alignment.BottomEnd
                 }).padding(start = if (axis.left) 18.dp else 0.dp, end = if (axis.left) 0.dp else 18.dp,
                     bottom = if (mobilePlatform) 0.dp else 2.dp)) {
-                    IconButton(onClick = { axisPage = 0; axisMenu = true }, modifier = Modifier.size(48.dp)
+                    IconButton(onClick = { if (chrome.desktopAxisStyle == true) showChartSettings = true else { axisPage = 0; axisMenu = true } }, modifier = Modifier.size(if (chrome.desktopAxisStyle == true) 32.dp else 48.dp)
                         .background(colors.Surface.copy(alpha = .94f), RoundedCornerShape(10.dp)).testTag("price-axis-menu-button")) {
-                        Icon(AppIcons.Settings, contentDescription = "价格轴设置", modifier = Modifier.size(if (mobilePlatform) 24.dp else 25.dp), tint = colors.Accent)
+                        Icon(AppIcons.Settings, contentDescription = "价格轴设置", modifier = Modifier.size(if (chrome.desktopAxisStyle == true) 19.dp else 24.dp), tint = colors.Accent)
                     }
                     PriceAxisMenu(axisMenu, axisPage, axis, manualScale == null && axis.fitAllBars, logarithmic || visible.all { it.low > 0 },
                         onPage = { axisPage = it }, onDismiss = { axisMenu = false },
@@ -945,7 +957,7 @@ fun TradingChart(
                 if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 96.dp)
                     .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!compact && !chrome.sharedToolbar) toolbar(Modifier)
-                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact,
+                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact, timeZone = chrome.timeZone, marketSession = chrome.marketSession,
                         keysHint = actions.tradingKeys?.let {
                             tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders, actions.stopRequiredForSizing, actions.attachedProtection)
                         }, keysLive = chartFocused)
@@ -1063,6 +1075,8 @@ class ChartChrome(
     val tabletCompactAxis: Boolean = false,
     val showNavigation: Boolean = true,
     val watermark: String = "HIDDEN",
+    val timeZone: String = "Asia/Shanghai",
+    val marketSession: TradingSessionState? = null,
     val candleBody: Boolean = true,
     val candleBorder: Boolean = false,
     val candleWick: Boolean = true,
@@ -1082,9 +1096,13 @@ fun beijingDateTime(timeMs: Long, seconds: Boolean = false): String {
 }
 
 /** Daily-or-longer broker bars carry a trading date rather than an intraday instant. */
-fun chartBarDateTime(timeMs: Long, timeframe: Timeframe): String = when {
+fun chartBarDateTime(timeMs: Long, timeframe: Timeframe, zone: String = "Asia/Shanghai"): String = when {
     timeframe.seconds >= Timeframe.DAY -> dateTime(timeMs).take(10)
-    else -> beijingDateTime(timeMs, seconds = timeframe.isSeconds)
+    else -> {
+        val local = Instant.fromEpochMilliseconds(timeMs).toLocalDateTime(TimeZone.of(zone))
+        fun two(value: Int) = value.toString().padStart(2, '0')
+        "${local.date} ${two(local.hour)}:${two(local.minute)}" + if (timeframe.isSeconds) ":${two(local.second)}" else ""
+    }
 }
 
 /** Parse a chart drawing coordinate typed as Beijing local time into the underlying UTC instant. */
@@ -1095,4 +1113,4 @@ fun parseBeijingChartTime(text: String): Long? = runCatching {
 }.getOrNull()
 
 /** Chart crosshair: Beijing time intraday, trading date for daily and longer bars. */
-fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe): String = chartBarDateTime(timeMs, timeframe)
+fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe, zone: String = "Asia/Shanghai"): String = chartBarDateTime(timeMs, timeframe, zone)

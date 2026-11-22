@@ -83,6 +83,7 @@ internal data class AccountRiskRule(
     @Serializable(with = SavedTrigger::class) val trigger: RiskTrigger? = null,
     val orderLimits: AccountOrderLimits = AccountOrderLimits(),
     val brackets: AccountBrackets = AccountBrackets(),
+    val manualLockedUntilMs: Long? = null,
 ) {
     /**
      * Whether the P&L limits are frozen on the broker's [tradingDay]. A freeze follows the trading day the lock itself
@@ -356,6 +357,32 @@ internal class AccountRiskController(
     private fun freshDay(broker: BrokerPlugin, accountId: String): LocalDate? =
         runCatching { broker.openSession(accountId) }.getOrNull()?.let { freshPnl(broker, it)?.first }
 
+    /** Only an actual recent Tradovate bid/ask timestamp can begin or expire a timed lock. */
+    private fun trustedQuoteTime(broker: BrokerPlugin): Long? {
+        if (!broker.descriptor.id.startsWith("tradovate-")) return null
+        val market = broker.market.value
+        if (!market.connected || !market.tradingReady) return null
+        val time = market.quotes.values.maxOfOrNull { it.timeMs } ?: return null
+        return time.takeIf { clock.now().toEpochMilliseconds() - it in -5_000L..30_000L }
+    }
+
+    /** Persist a lock while holding the same account command mutex used by all order paths. */
+    suspend fun lockFor(broker: BrokerPlugin, account: AccountInfo, durationMs: Long): String? = commands(broker, account.id).withLock {
+        storageMutex.withLock {
+            val now = trustedQuoteTime(broker)
+            val current = rule(broker, account.id)
+            when {
+                unreadable.value -> "无法读取本机风控记录，未启用定时锁定。"
+                account.readOnly -> "只读账户无法锁定。"
+                durationMs !in 60_000L..604_800_000L -> "锁定时长需在 1 分钟至 7 天之间。"
+                now == null -> "没有可用的最新券商报价时间，无法启动定时锁定。"
+                current.manualLockedUntilMs != null && now < current.manualLockedUntilMs -> "账户已经锁定。"
+                !persist(broker, account.id, current.copy(manualLockedUntilMs = now + durationMs)) -> "锁定记录保存失败，未发送平仓。"
+                else -> null
+            }
+        }
+    }
+
     /** The trigger that locks the account now: it holds until the broker reports a later trading day. */
     fun lockingTrigger(broker: BrokerPlugin, session: AccountSession): RiskTrigger? {
         val trigger = pnlRule(broker, session.account.id)?.trigger ?: return null
@@ -366,6 +393,10 @@ internal class AccountRiskController(
     /** Why this account may not add exposure right now, or null. What only reduces it stays possible: see [refusal]. */
     fun restriction(broker: BrokerPlugin, session: AccountSession): String? {
         if (unreadable.value) return "本机风控记录无法读取，已暂停开仓和改单。"
+        rule(broker, session.account.id).manualLockedUntilMs?.let { until ->
+            val now = trustedQuoteTime(broker)
+            if (now == null || now < until) return "子账户定时锁定中；等待券商报价时间到期。"
+        }
         lockingTrigger(broker, session)?.let {
             return "${it.day} 交易日已锁定 · ${if (it.pnl < 0) "达到亏损额度" else "达到盈利额度"}"
         }
@@ -476,6 +507,11 @@ internal class AccountRiskController(
     private suspend fun evaluate(broker: BrokerPlugin, session: AccountSession): String? = storageMutex.withLock {
         val id = session.account.id
         val fresh = freshPnl(broker, session)
+        val timed = rule(broker, id)
+        val until = timed.manualLockedUntilMs
+        val quoteTime = trustedQuoteTime(broker)
+        if (until != null && quoteTime != null && quoteTime >= until &&
+            !persist(broker, id, timed.copy(manualLockedUntilMs = null))) return@withLock "锁定到期状态保存失败，已暂停开仓。"
         // A freeze is over once a fresh broker day reaches its end. That is saved at once: a snapshot that goes stale
         // later counts as frozen again, and would bring back a freeze that ended long ago.
         rule(broker, id).let { if (it.frozenUntil != null && fresh != null && fresh.first >= it.frozenUntil) persist(broker, id, it.copy(frozenUntil = null)) }

@@ -171,7 +171,7 @@ internal fun MarketWatch(
                         key(plugin, instrument.priceSymbol, account.accountId) {
                             MarketQuoteRow(instrument, market.quotes[instrument.priceSymbol],
                                 activity[instrument.priceSymbol] ?: MarketActivity(), symbol == selected,
-                                connected = market.connected, onClick = { onSymbol(symbol) })
+                                connected = market.connected, session = market.sessionStates[symbol].takeIf { market.marketDataConnected }, onClick = { onSymbol(symbol) })
                         }
                     } else Text("$symbol · 等待合约加载", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = colors.Muted, style = type.bodySmall)
                 }
@@ -225,7 +225,7 @@ private data class ActivityMarker(val label: String, val count: Int, val color: 
 @Composable
 internal fun MarketQuoteRow(
     instrument: Instrument, quote: Quote?, activity: MarketActivity, selected: Boolean,
-    connected: Boolean = true, onClick: () -> Unit,
+    connected: Boolean = true, session: TradingSessionState? = null, onClick: () -> Unit,
 ) {
     val colors = TradingColors
     val markers = listOf(
@@ -258,7 +258,12 @@ internal fun MarketQuoteRow(
         val stacked = maxWidth < 280.dp || LocalDensity.current.fontScale > 1.15f
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val symbol: @Composable (Modifier) -> Unit = { m -> Column(m) {
-                Text(instrument.symbol, color = colors.Ink, style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(instrument.symbol, color = colors.Ink, style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (connected && session != null && session != TradingSessionState.UNKNOWN)
+                        StatusDot(if (session == TradingSessionState.OPEN) colors.Profit else Color.Black,
+                            Modifier.semantics { contentDescription = if (session == TradingSessionState.OPEN) "开市" else "闭市" })
+                }
                 Text(watchSubtitle(instrument), color = colors.Muted, style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("涨跌 $dailyChange", Modifier.testTag("market-change-${instrument.symbol}").semantics {
                     contentDescription = "当日涨跌幅 $dailyChange，按最新成交与券商结算价计算"

@@ -94,6 +94,7 @@ class TradovateBroker(
     private val discardedCharts = mutableSetOf<String>()
     private val localEvents = mutableMapOf<String, List<ActivityEvent>>()
     private var quotes = emptyMap<String, Quote>()
+    private var sessionStates = emptyMap<String, TradingSessionState>()
     private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long, val quoteTime: Long, val lastTrade: Long?, val settlement: Long?)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
@@ -544,11 +545,43 @@ class TradovateBroker(
                         if (symbol in continuousRoutes) refreshContinuous(symbol)
                         syncWatchQuotes()
                         preloadWake.trySend(Unit)
+                        while (isActive && !stopped) {
+                            refreshMarketSession(symbol)
+                            delay(60_000)
+                        }
                     }
                 }
             }
             syncWatchQuotes()
         }
+    }
+
+    /** The broker calendar determines scheduled session state; missing or incomplete calendars remain unknown. */
+    private suspend fun refreshMarketSession(symbol: String) {
+        try {
+            val maturity = lock.withLock {
+                val spec = instruments.firstOrNull { it.symbol == symbol }
+                val priceSymbol = spec?.priceSymbol ?: symbol
+                val contractId = contractSpecs.entries.firstOrNull { it.value.symbol == priceSymbol }?.key
+                contractId?.let { book.item("contract", it)?.long("contractMaturityId") }
+            }
+            if (maturity == null || !marketReady) return
+            val rows = (rest("GET", "tradingSession/deps?masterid=$maturity") as? JsonArray).orEmpty()
+                .mapNotNull { it as? JsonObject }.filter { it.long("contractMaturityId") == maturity }
+            val intervals = rows.mapNotNull { row ->
+                val start = row.str("startTime")?.let(::timestamp)
+                val end = row.str("endTime")?.let(::timestamp)
+                if (start != null && end != null && start < end) start to end else null
+            }.sortedBy { it.first }
+            val time = now()
+            val state = when {
+                intervals.any { time >= it.first && time < it.second } -> TradingSessionState.OPEN
+                intervals.isNotEmpty() && time >= intervals.first().first && time < intervals.last().second -> TradingSessionState.CLOSED
+                else -> TradingSessionState.UNKNOWN
+            }
+            lock.withLock { sessionStates = sessionStates + (symbol to state); publish() }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { lock.withLock { sessionStates = sessionStates - symbol; publish() } }
     }
 
     private suspend fun syncWatchQuotes() {
@@ -1688,6 +1721,7 @@ class TradovateBroker(
         .maxByOrNull { it.str("timestamp") ?: "" }
 
     private fun publish() {
+        if (!marketReady || !connected) sessionStates = emptyMap()
         val unresolved = unknownCommands.isNotEmpty()
         val pending = awaiting.isNotEmpty()
         val message = when {
@@ -1697,7 +1731,8 @@ class TradovateBroker(
         }
         mutableMarket.value = MarketSnapshot(quotes, now(), mutableMarket.value.revision + 1, connected,
             statusMessage = message, tradingReady = connected && marketReady && !connecting && !synchronizing && !unresolved && !pending,
-            connectionLatencyMs = latencyMs.takeIf { connected && !stopped && latencySampleAtMs?.let { now() - it in 0..LATENCY_VALID_MS } == true })
+            connectionLatencyMs = latencyMs.takeIf { connected && !stopped && latencySampleAtMs?.let { now() - it in 0..LATENCY_VALID_MS } == true },
+            sessionStates = if (marketReady) sessionStates else emptyMap(), marketDataConnected = marketReady && connected)
     }
     private fun fresh(quote: Quote?): Boolean = quote != null && now() - quote.timeMs in -5_000..15_000
     private suspend fun rest(method: String, path: String, body: JsonObject? = null): JsonElement = requestSlots.withPermit {

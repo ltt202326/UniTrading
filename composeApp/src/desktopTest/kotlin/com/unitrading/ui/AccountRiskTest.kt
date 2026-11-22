@@ -138,6 +138,25 @@ class AccountRiskTest {
     private val exitTarget = sell.copy(kind = OrderKind.LIMIT, lotsHundredths = 200, entryPrice = 552_000)
     private val stillAllowed = "；仍可平仓、撤单、收紧止损或挂减仓单。"
 
+    @Test fun timedLockSurvivesRestartAndWaitsForFreshBrokerQuote() = runTest {
+        val broker = RiskFixture(login = "tradovate-demo-test")
+        val store = MemorySnapshotStore()
+        val risk = controller(store, broker.clock)
+        val id = broker.accounts.first().id
+        val quoteTime = broker.clock.now().toEpochMilliseconds()
+        broker.source.market.value = broker.source.market.value.copy(connected = true, tradingReady = true,
+            quotes = mapOf(broker.source.spec.symbol to Quote(549_900, 550_000, quoteTime)))
+        assertNull(risk.lockFor(broker, broker.accounts.first(), 60_000L))
+        val restored = controller(store, broker.clock)
+        val guarded = restored.guard(broker, broker.openSession(id))
+        assertFalse(guarded.placeOrder("during", broker.request).accepted)
+        broker.clock.time += 2.minutes
+        assertFalse(guarded.placeOrder("stale", broker.request).accepted)
+        broker.source.market.value = broker.source.market.value.copy(quotes = mapOf(broker.source.spec.symbol to
+            Quote(549_900, 550_000, broker.clock.now().toEpochMilliseconds())))
+        assertTrue(guarded.placeOrder("after", broker.request).accepted)
+    }
+
     @Test fun thresholdLatchesBeforeOrderAndSurvivesRestartUntilNewBrokerDay() = runTest {
         val broker = RiskFixture()
         val store = MemorySnapshotStore()

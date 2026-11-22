@@ -342,11 +342,20 @@ class ChartContextMenuUiTest {
         compose.waitForIdle()
     }
 
+    private fun openDraftQuantity() {
+        val bounds = chart().fetchSemanticsNode().config[OrderTagButtons]
+        val at = assertNotNull(bounds["编辑下单数量"]).center
+        chart().performMouseInput { click(at) }
+        compose.waitForIdle()
+    }
+
     @Test fun draftButtonHonoursConfirmationAndQuantity() {
         render()
         rightClick(549_000)
         item("BUY-LIMIT").performClick()
+        openDraftQuantity()
         compose.onNodeWithTag("chart-draft-quantity").performTextReplacement("2")
+        compose.onNodeWithContentDescription("关闭").performClick()
         draftSubmit()
         compose.onNodeWithTag("confirm-action").assertExists()
         assertTrue(broker.placed.isEmpty())
@@ -359,7 +368,9 @@ class ChartContextMenuUiTest {
         render(skipConfirmation = true)
         rightClick(549_000)
         item("BUY-LIMIT").performClick()
+        openDraftQuantity()
         compose.onNodeWithTag("chart-draft-quantity").performTextReplacement("")
+        compose.onNodeWithContentDescription("关闭").performClick()
         draftSubmit()
         compose.waitUntil(5000) { broker.placed.size == 1 }
         assertEquals(100L, broker.placed.single().lotsHundredths)

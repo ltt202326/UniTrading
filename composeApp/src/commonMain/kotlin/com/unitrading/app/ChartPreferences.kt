@@ -54,6 +54,7 @@ data class ChartPreferences(
     val showHistory: Boolean = true,
     val priceAxis: PriceAxisSettings = PriceAxisSettings(),
     val watermark: String = "SYMBOL_TIMEFRAME",
+    val chartTimeZone: String = "Asia/Shanghai",
     val candleBody: Boolean = true,
     val candleBorder: Boolean = true,
     val candleWick: Boolean = true,
@@ -65,6 +66,7 @@ data class ChartPreferences(
     private fun minutes(value: Int): Int = if (value in 1..Timeframe.MAX_SECONDS / Timeframe.MINUTE) value * Timeframe.MINUTE else -1
 
     fun validate() {
+        require(chartTimeZone in setOf("Asia/Shanghai", "America/New_York", "America/Chicago", "UTC")) { "图表时区无效" }
         require(watermark in setOf("SYMBOL_TIMEFRAME", "SYMBOL", "TIMEFRAME", "HIDDEN")) { "水印设置无效" }
         require((favoriteLengths + customLengths + listOfNotNull(lastLength)).all { it in 1..Timeframe.MAX_SECONDS }) { "周期超出范围" }
         require(favoriteLengths.distinct() == favoriteLengths && customLengths.distinct() == customLengths) { "周期重复" }
@@ -183,6 +185,8 @@ class ChartPreferencesController(private val store: SnapshotStore) {
         }
         persist(updated)
     }
+
+    suspend fun setChartTimeZone(value: String): Boolean = saveMutex.withLock { persist(preferences.value.copy(chartTimeZone = value)) }
 
     suspend fun setWatermark(value: String): Boolean = saveMutex.withLock {
         persist(preferences.value.copy(watermark = value))

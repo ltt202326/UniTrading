@@ -161,6 +161,9 @@ data class BrokerCapabilities(
 @Serializable
 data class AccountInfo(val id: String, val name: String, val currency: String = "USD", val readOnly: Boolean = false)
 @Serializable
+enum class TradingSessionState { OPEN, CLOSED, UNKNOWN }
+
+@Serializable
 data class MarketSnapshot(
     val quotes: Map<String, Quote> = emptyMap(),
     val simulatedTimeMs: Long = 0,
@@ -170,6 +173,8 @@ data class MarketSnapshot(
     val tradingReady: Boolean = true,
     /** A recent account-connection round-trip time, unavailable when null. */
     val connectionLatencyMs: Long? = null,
+    val sessionStates: Map<String, TradingSessionState> = emptyMap(),
+    val marketDataConnected: Boolean = false,
 )
 @Serializable
 data class OrderRequest(

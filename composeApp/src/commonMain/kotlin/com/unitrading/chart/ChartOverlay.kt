@@ -86,8 +86,8 @@ fun barCountdown(barOpenMs: Long, periodMs: Long, nowMs: Long): String? {
 }
 
 /** Time-axis label: clock time for intraday bars, to the second for second intervals, and the calendar day for daily and longer bars. */
-fun axisTimeLabel(timeMs: Long, timeframe: Timeframe): String =
-    if (timeframe.seconds >= Timeframe.DAY) dateTime(timeMs).substring(5, 10) else beijingDateTime(timeMs, seconds = timeframe.isSeconds).substring(11)
+fun axisTimeLabel(timeMs: Long, timeframe: Timeframe, zone: String = "Asia/Shanghai"): String =
+    if (timeframe.seconds >= Timeframe.DAY) dateTime(timeMs).substring(5, 10) else chartBarDateTime(timeMs, timeframe, zone).substring(11)
 
 /**
  * Chart controls: symbol, interval, indicators and layers, with the favourite intervals inline. Wide layouts float them
@@ -333,6 +333,8 @@ internal fun ChartLegend(
     compact: Boolean = false,
     keysHint: String? = null,
     keysLive: Boolean = false,
+    timeZone: String = "Asia/Shanghai",
+    marketSession: TradingSessionState? = null,
 ) {
     val colors = TradingColors
     val type = MaterialTheme.typography
@@ -345,7 +347,11 @@ internal fun ChartLegend(
         .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp).testTag("chart-legend"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("${instrument.name} · ${timeframe.label} · ${instrument.category}", Modifier.weight(1f, fill = false), style = type.labelMedium)
-            if (connected) StatusDot(colors.Profit, Modifier.semantics { contentDescription = "行情已连接" })
+            if (connected && marketSession != null && marketSession != TradingSessionState.UNKNOWN) {
+                StatusDot(if (marketSession == TradingSessionState.OPEN) colors.Profit else Color.Black,
+                    Modifier.semantics { contentDescription = if (marketSession == TradingSessionState.OPEN) "开市" else "闭市" })
+                if (marketSession == TradingSessionState.CLOSED) Text("Closed", style = type.labelSmall, color = colors.Muted)
+            }
             ActionIcon(if (collapsed) AppIcons.ExpandMore else AppIcons.ExpandLess, if (collapsed) "展开图例" else "收起图例", "legend-toggle", Modifier.size(28.dp), tint = colors.Muted, iconSize = 20.dp, onClick = onToggleCollapsed)
         }
         // A line drag's estimate shows even when the legend is folded: it is the only live feedback until the drag ends.
@@ -359,7 +365,7 @@ internal fun ChartLegend(
                     listOf("开" to bar.open, "高" to bar.high, "低" to bar.low, "收" to bar.close).forEach { (label, value) -> Figure(label, instrument.formatPrice(value), tone) }
                     Text(change.label(instrument), style = type.labelSmall, color = if (change.diff >= 0) colors.UpText else colors.DownText)
                     Figure("量", formatVolume(bar.volume), colors.Ink)
-                    Text("${chartBarDateTime(bar.timeMs, timeframe)} ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else "北京时间"}", style = type.labelSmall, color = colors.Muted)
+                    Text("${chartBarDateTime(bar.timeMs, timeframe, timeZone)} ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else timeZone}", style = type.labelSmall, color = colors.Muted)
                 }
             }
             if (!compact) Row(Modifier.padding(top = 4.dp, bottom = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
