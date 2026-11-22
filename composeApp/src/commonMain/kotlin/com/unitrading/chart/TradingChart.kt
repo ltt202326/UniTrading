@@ -1049,7 +1049,7 @@ class ChartChrome(
     val showNavigation: Boolean = true,
     val watermark: String = "HIDDEN",
     val candleBody: Boolean = true,
-    val candleBorder: Boolean = true,
+    val candleBorder: Boolean = false,
     val candleWick: Boolean = true,
 )
 
