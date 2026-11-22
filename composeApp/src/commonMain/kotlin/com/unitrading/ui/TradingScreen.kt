@@ -1074,7 +1074,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         LineAction.SubmitDraft -> {
                             val order = request
                             if (order == null || preview?.valid != true) showNotice(preview?.errors?.firstOrNull() ?: "订单参数无效，请检查数量与报价", attention = true)
-                            else executeTrade(Confirmation.Place(order, fromChart = true))
+                            else reviewTrade(Confirmation.Place(order, fromChart = true))
                         }
                         LineAction.EditDraftQuantity -> Unit
                         LineAction.CloseDraft -> if (compact) closeOrder() else showDraft = false
