@@ -1243,6 +1243,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             },
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
                             desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle, watermark = if (desktopStyle) chartPreferences.watermark else "HIDDEN",
+                            candleBody = !desktopStyle || chartPreferences.candleBody, candleBorder = !desktopStyle || chartPreferences.candleBorder,
+                            candleWick = !desktopStyle || chartPreferences.candleWick,
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
                                 scope.launch { runtime.chartPreferences.savePriceAxis() }

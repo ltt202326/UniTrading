@@ -743,10 +743,11 @@ fun TradingChart(
                         val center = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
                         val color = if (candle.close >= candle.open) colors.Up else colors.Down
                         val width = candleWidth.body
-                        drawLine(color, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), candleWidth.wick)
+                        if (chrome.candleWick) drawLine(color, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), candleWidth.wick)
                         val y = minOf(scale.y(candle.open), scale.y(candle.close))
                         val height = maxOf(abs(scale.y(candle.open) - scale.y(candle.close)), 1.6f)
-                        drawRect(color, Offset(center - width / 2, y), Size(width, height))
+                        if (chrome.candleBody) drawRect(color, Offset(center - width / 2, y), Size(width, height))
+                        if (chrome.candleBorder) drawRect(color, Offset(center - width / 2, y), Size(width, height), style = Stroke(width = 1f))
                     }
                     drawIndicatorOverlays(overlays, range, scale, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
                     drawingLayer?.let { drawLayerDrawings(it, textMeasurer, colors.Chart) }
@@ -1047,6 +1048,9 @@ class ChartChrome(
     val tabletCompactAxis: Boolean = false,
     val showNavigation: Boolean = true,
     val watermark: String = "HIDDEN",
+    val candleBody: Boolean = true,
+    val candleBorder: Boolean = true,
+    val candleWick: Boolean = true,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

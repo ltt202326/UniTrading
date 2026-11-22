@@ -188,6 +188,15 @@ internal fun SettingsPage(
 
             if (show("外观与图表")) SettingsSection("外观与图表") {
                 if (desktopLayout) {
+                    Text("K 线显示", Modifier.padding(start = 16.dp, top = 12.dp), style = MaterialTheme.typography.labelLarge)
+                    listOf(Triple("body", "主体", chartPreferences.candleBody), Triple("border", "边框", chartPreferences.candleBorder), Triple("wick", "影线", chartPreferences.candleWick)).forEach { (key, title, selected) ->
+                        Row(Modifier.fillMaxWidth().toggleable(selected, role = Role.Checkbox) { enabled ->
+                            preferenceScope.launch { runtime.chartPreferences.setCandlePart(key, enabled) }
+                        }.padding(horizontal = 16.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(selected, onCheckedChange = null)
+                            Text(title, Modifier.padding(start = 8.dp))
+                        }
+                    }
                     Text("商品代码水印", Modifier.padding(start = 16.dp, top = 12.dp), style = MaterialTheme.typography.labelLarge)
                     listOf("SYMBOL_TIMEFRAME" to "商品代码与周期", "SYMBOL" to "仅商品代码", "HIDDEN" to "隐藏水印").forEach { (value, label) ->
                         Row(Modifier.fillMaxWidth().selectable(chartPreferences.watermark == value, role = Role.RadioButton) {

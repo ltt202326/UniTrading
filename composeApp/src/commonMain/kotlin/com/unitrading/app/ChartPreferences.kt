@@ -54,6 +54,9 @@ data class ChartPreferences(
     val showHistory: Boolean = true,
     val priceAxis: PriceAxisSettings = PriceAxisSettings(),
     val watermark: String = "SYMBOL_TIMEFRAME",
+    val candleBody: Boolean = true,
+    val candleBorder: Boolean = true,
+    val candleWick: Boolean = true,
 ) {
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
@@ -168,6 +171,17 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setLegendCollapsed(collapsed: Boolean): Boolean = saveMutex.withLock {
         preferences.value.legendCollapsed == collapsed || persist(preferences.value.copy(legendCollapsed = collapsed))
+    }
+
+    suspend fun setCandlePart(part: String, enabled: Boolean): Boolean = saveMutex.withLock {
+        val value = preferences.value
+        val updated = when (part) {
+            "body" -> value.copy(candleBody = enabled)
+            "border" -> value.copy(candleBorder = enabled)
+            "wick" -> value.copy(candleWick = enabled)
+            else -> return@withLock false
+        }
+        persist(updated)
     }
 
     suspend fun setWatermark(value: String): Boolean = saveMutex.withLock {
