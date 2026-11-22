@@ -1234,15 +1234,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             openChartOrderEditor(chartId)
                         } },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
-                        chrome = ChartChrome(chartCompact, chartPreferences.legendCollapsed ?: (compactShort || chartShort),
-                            { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
+                        chrome = ChartChrome(chartCompact, if (desktopStyle) chartPreferences.chartLegendCollapsed[chartId] ?: false else chartPreferences.legendCollapsed ?: (compactShort || chartShort),
+                            { folded -> scope.launch { if (desktopStyle) runtime.chartPreferences.setChartLegendCollapsed(chartId, folded) else runtime.chartPreferences.setLegendCollapsed(folded) } },
                             ordering = compact && orderOnChart && orderOpen, drawings = drawings, views = runtime.chartViews,
                             showHistory = if (!shared || chartId == MAIN_CHART) historyVisible else null, onShowHistory = { visible ->
                                 runtime.chartPreferences.selectHistoryVisible(visible)
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
                             },
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
-                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet,
+                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
                                 scope.launch { runtime.chartPreferences.savePriceAxis() }
