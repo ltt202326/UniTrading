@@ -52,7 +52,7 @@ class HistoricalReplayUiTest {
         compose.setContent { TradingScreen(runtime) }
         compose.onNodeWithTag("quick-login-picker").performClick()
         compose.onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
-        compose.onNodeWithTag("open-historical-replay").performClick()
+        compose.onNodeWithTag("open-historical-replay").performScrollTo().assertIsDisplayed().performClick()
         awaitReplay()
         compose.onNodeWithTag("replay-buy").performClick()
         compose.onNodeWithTag("replay-next").performClick()
