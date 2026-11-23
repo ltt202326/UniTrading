@@ -34,7 +34,12 @@ internal fun HistoricalReplayDialog(input: ReplayInput, onDismiss: () -> Unit) {
         Surface(Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f).testTag("historical-replay"),
             shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface) {
             val bars = loaded?.first.orEmpty()
-            if (loaded == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("正在准备历史数据…") }
+            if (loaded == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("正在准备历史数据…")
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                }
+            }
             else if (bars.size < 2) Column(Modifier.padding(24.dp)) {
                 Text(loaded?.second ?: "当前图表没有足够的历史 K 线，请等待数据加载后重试。")
                 TextButton(onClick = onDismiss) { Text("关闭") }
@@ -119,10 +124,10 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, onDismiss: (
                     Slider(value = start.toFloat(), onValueChange = { start = it.toInt().coerceIn(0, bars.lastIndex - 1); state = ReplayState(start) },
                         valueRange = 0f..(bars.lastIndex - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.testTag("replay-start"))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(startTime, { startTime = it }, label = { Text(if (input.timeframe.isDaily) "起点日期 YYYY-MM-DD" else "起点时间 YYYY-MM-DD HH:mm") },
+                        OutlinedTextField(startTime, { startTime = it }, label = { Text(if (input.timeframe.seconds >= Timeframe.DAY) "起点日期 YYYY-MM-DD" else "起点时间 YYYY-MM-DD HH:mm") },
                             modifier = Modifier.weight(1f).testTag("replay-start-time"), singleLine = true)
                         TextButton(onClick = {
-                            val at = if (input.timeframe.isDaily) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
+                            val at = if (input.timeframe.seconds >= Timeframe.DAY) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
                                 else parseChartTime(startTime, input.zone.zoneId)
                             if (at == null) message = "请输入有效的图表时区日期和时间"
                             else if (at < bars.first().timeMs || at > bars.last().timeMs) message = "该时间不在已加载的历史范围内"
