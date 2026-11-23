@@ -1338,9 +1338,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                     }
                 }
-                var replayInput by remember { mutableStateOf<ReplayInput?>(null) }
                 // A toolbar follows the last-selected chart in its own workspace.
                 @Composable fun sharedChartBar(workspace: String, modifier: Modifier, singleLine: Boolean) {
+                    var replayInput by remember { mutableStateOf<ReplayInput?>(null) }
                     val target = workspaceSelected[workspace] ?: workspace
                     val slot = shownCharts[target]
                     val selectedInstrument = if (target == workingChart) instrument else
@@ -1378,8 +1378,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     plugin.history(selectedInstrument.symbol, source), indicatorSettings.indicators.toList())
                             }, modifier = Modifier.testTag("open-historical-replay")) { Text("回放") }
                         }, singleRow = singleLine)
+                    replayInput?.let { input -> HistoricalReplayDialog(input) { replayInput = null } }
                 }
-                replayInput?.let { input -> HistoricalReplayDialog(input) { replayInput = null } }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
                     val selected = workspaceSelected[workspace] ?: workspace
                     val indicatorController = runtime.indicatorsForChart(selected)

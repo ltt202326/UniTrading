@@ -40,10 +40,10 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-stop").performTextInput("99.50")
         compose.onNodeWithTag("replay-target").performTextInput("100.50")
         compose.onNodeWithTag("replay-buy").performClick()
-        compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 0 笔")
+        compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 0 笔", substring = true)
         compose.onNodeWithTag("replay-next").performClick()
-        compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 1 笔")
-        compose.onNodeWithTag("replay-realized").assertTextContains("-2.50")
+        compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 1 笔", substring = true)
+        compose.onNodeWithTag("replay-realized").assertTextContains("-2.50", substring = true)
     }
 
     @Test fun openingReplayFromConnectedWorkspaceNeverSendsBrokerOrders() {
