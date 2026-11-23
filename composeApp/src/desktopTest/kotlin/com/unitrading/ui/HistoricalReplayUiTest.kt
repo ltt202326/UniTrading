@@ -3,6 +3,9 @@ package com.unitrading.ui
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import com.unitrading.app.ChartTimeZone
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
@@ -20,7 +23,7 @@ class HistoricalReplayUiTest {
         val bars = listOf(Candle(1_700_000_000_000, 10_000, 10_025, 9_975, 10_000),
             Candle(1_700_000_060_000, 10_000, 10_075, 9_925, 10_000),
             Candle(1_700_000_120_000, 90_000, 90_025, 89_975, 90_000))
-        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false, ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
+        compose.setContent { TradingTheme { Box(Modifier.fillMaxSize()) { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false, ChartTimeZone.SHANGHAI, bars, emptyList())) {} } } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-buy").fetchSemanticsNodes().isNotEmpty() }
         val chart = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription]
             .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
