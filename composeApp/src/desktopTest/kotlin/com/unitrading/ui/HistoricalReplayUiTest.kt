@@ -9,7 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import com.unitrading.app.ChartTimeZone
 import com.unitrading.app.MemorySnapshotStore
@@ -139,7 +139,7 @@ class HistoricalReplayUiTest {
         val coarse = (0..3).map { Candle(it * 300_000L, 10_000, 10_025, 9_975, 10_000) }
         val fine = (0..20).map { Candle(it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
         var available by mutableStateOf(false)
-        var revision by mutableIntStateOf(0)
+        var revision by mutableLongStateOf(0)
         val requested = mutableListOf<Pair<String, Timeframe>>()
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M5, false,
             ChartTimeZone.SHANGHAI, coarse, emptyList(), skipConfirmation = true), revision,
