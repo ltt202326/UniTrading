@@ -5,6 +5,14 @@ import com.unitrading.broker.Timeframe
 import kotlin.test.*
 
 class ReplayTimelineTest {
+    @Test fun brokerHistoryDoesNotRevealUnfinishedOrFutureCandles() {
+        val bars = (0..3).map { Candle(it * 300_000L, 100, 110, 90, 100) }
+        assertEquals(0, replayCompletedBrokerBars(bars, Timeframe.M5, 299_999).size)
+        assertEquals(listOf(bars[0], bars[1]), replayCompletedBrokerBars(bars, Timeframe.M5, 600_000))
+        val day = Candle(0, 100, 120, 90, 110)
+        assertTrue(replayCompletedBrokerBars(listOf(day), Timeframe.D1, Timeframe.D1.millis - 1).isEmpty())
+        assertEquals(listOf(day), replayCompletedBrokerBars(listOf(day), Timeframe.D1, Timeframe.D1.millis))
+    }
     @Test fun largerCandleNeverContainsUnplayedMinutes() {
         val bars = (0..5).map { i -> Candle(i * 60_000L, 100L + i, 110L + i, 90L + i, 105L + i, 1) }
         val partial = replayChartBars(bars, 1, Timeframe.M1, Timeframe.M5, "@MES", false)
