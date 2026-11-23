@@ -4,15 +4,28 @@ import com.unitrading.broker.Candle
 import com.unitrading.broker.Instrument
 import com.unitrading.broker.Position
 import com.unitrading.broker.Side
+import com.unitrading.broker.OrderKind
 import com.unitrading.broker.checkedAdd
 import com.unitrading.broker.commission
 import com.unitrading.broker.grossPnl
 
 /** The replay ledger is deliberately independent of every broker account and order route. */
 internal data class ReplayTrade(val position: Position, val exit: Long, val exitTimeMs: Long, val pnlMicros: Long, val reason: String)
+internal data class ReplayPending(val id: Long, val side: Side, val kind: OrderKind, val quantity: Long,
+    val price: Long, val stop: Long?, val target: Long?)
 internal data class ReplayState(
     val index: Int, val positions: List<Position> = emptyList(), val trades: List<ReplayTrade> = emptyList(), val nextId: Long = 1,
+    val pending: List<ReplayPending> = emptyList(), val lastNotice: String? = null,
 ) {
+    fun enqueue(spec: Instrument, side: Side, kind: OrderKind, quantity: Long, price: Long, stop: Long?, target: Long?, current: Long): ReplayState {
+        require(kind != OrderKind.MARKET) { "市价单应立即成交" }
+        require(spec.tickSize > 0 && price > 0 && price % spec.tickSize == 0L) { "挂单价格无效" }
+        require(if (kind == OrderKind.LIMIT) { if (side == Side.BUY) price < current else price > current }
+            else { if (side == Side.BUY) price > current else price < current }) { "挂单价格方向不正确" }
+        // Reuse the same contract, quantity and protection checks at the intended entry price.
+        open(spec, Candle(0, price, price, price, price), side, quantity, stop, target)
+        return copy(pending = pending + ReplayPending(nextId, side, kind, quantity, price, stop, target), nextId = nextId + 1)
+    }
     fun open(spec: Instrument, candle: Candle, side: Side, quantity: Long, stop: Long?, target: Long?): ReplayState {
         require(spec.lotStepHundredths > 0 && quantity > 0 && quantity >= spec.minLotsHundredths && quantity <= spec.maxLotsHundredths && quantity % spec.lotStepHundredths == 0L) { "数量不符合合约手数限制" }
         val entry = candle.close
@@ -43,7 +56,7 @@ internal data class ReplayState(
 
     /** OHLC does not reveal the intrabar path: when both exits touch, assume the stop happens first. */
     fun advance(spec: Instrument, next: Candle): ReplayState {
-        var state = copy(index = index + 1)
+        var state = copy(index = index + 1, lastNotice = null)
         for (p in positions) {
             val stopHit = p.stopLoss?.let { if (p.side == Side.BUY) next.low <= it else next.high >= it } == true
             val targetHit = p.takeProfit?.let { if (p.side == Side.BUY) next.high >= it else next.low <= it } == true
@@ -53,6 +66,23 @@ internal data class ReplayState(
                 val price = if (p.side == Side.BUY) minOf(next.open, p.stopLoss!!) else maxOf(next.open, p.stopLoss!!)
                 state = state.close(spec, p, price, next.timeMs, "止损")
             } else if (openTarget || targetHit) state = state.close(spec, p, p.takeProfit!!, next.timeMs, "止盈")
+        }
+        // Newly triggered orders are not retrospectively matched against this candle's earlier high/low.
+        // Their protective orders become active on the following source candle.
+        for (order in pending) {
+            val hit = when (order.kind) {
+                OrderKind.LIMIT -> if (order.side == Side.BUY) next.low <= order.price else next.high >= order.price
+                OrderKind.STOP -> if (order.side == Side.BUY) next.high >= order.price else next.low <= order.price
+                OrderKind.MARKET -> false
+            }
+            if (!hit) continue
+            val fill = when (order.kind) {
+                OrderKind.STOP -> if (order.side == Side.BUY) maxOf(next.open, order.price) else minOf(next.open, order.price)
+                else -> order.price
+            }
+            state = state.copy(pending = state.pending.filterNot { it.id == order.id })
+            val opened = runCatching { state.open(spec, next.copy(close = fill), order.side, order.quantity, order.stop, order.target) }
+            state = opened.getOrElse { state.copy(lastNotice = "挂单触发时保护价无效，已取消该模拟挂单") }
         }
         return state
     }

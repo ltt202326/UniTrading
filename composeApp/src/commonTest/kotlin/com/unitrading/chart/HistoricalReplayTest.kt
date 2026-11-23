@@ -42,4 +42,25 @@ class HistoricalReplayTest {
         assertEquals(1_500_000L, closed.trades.single().pnlMicros)
         assertTrue(closed.positions.isEmpty())
     }
+
+    @Test fun pendingLimitFillsOnlyOnLaterBarAndProtectionStartsFollowingBar() {
+        val queued = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_950, 9_900, 10_050, 10_000)
+        assertTrue(queued.positions.isEmpty())
+        val untouched = queued.advance(spec, Candle(2, 10_000, 10_025, 9_975, 10_000))
+        assertEquals(1, untouched.pending.size)
+        val filled = untouched.advance(spec, Candle(3, 10_000, 10_050, 9_875, 9_950))
+        assertTrue(filled.pending.isEmpty())
+        assertEquals(9_950L, filled.positions.single().entryPrice)
+        assertTrue(filled.trades.isEmpty())
+        val stopped = filled.advance(spec, Candle(4, 9_950, 9_975, 9_875, 9_925))
+        assertEquals("止损", stopped.trades.single().reason)
+    }
+
+    @Test fun stopEntryGapsAtOpenAndInvalidBracketIsCancelled() {
+        val queued = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.STOP, 100, 10_050, 9_950, 10_100, 10_000)
+        val result = queued.advance(spec, Candle(2, 10_125, 10_150, 10_100, 10_125))
+        assertTrue(result.pending.isEmpty())
+        assertTrue(result.positions.isEmpty())
+        assertNotNull(result.lastNotice)
+    }
 }
