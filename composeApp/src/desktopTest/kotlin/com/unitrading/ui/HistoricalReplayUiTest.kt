@@ -2,10 +2,14 @@ package com.unitrading.ui
 
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.semantics.SemanticsProperties
 import com.unitrading.app.ChartTimeZone
+import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 import org.junit.Rule
 import org.junit.Test
+import kotlin.test.assertTrue
 
 class HistoricalReplayUiTest {
     @get:Rule val compose = createComposeRule()
@@ -15,9 +19,12 @@ class HistoricalReplayUiTest {
             minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0, quantityUnit = "张")
         val bars = listOf(Candle(1_700_000_000_000, 10_000, 10_025, 9_975, 10_000),
             Candle(1_700_000_060_000, 10_000, 10_075, 9_925, 10_000),
-            Candle(1_700_000_120_000, 10_000, 10_025, 9_975, 10_000))
+            Candle(1_700_000_120_000, 90_000, 90_025, 89_975, 90_000))
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false, ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-buy").fetchSemanticsNodes().isNotEmpty() }
+        val chart = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription]
+            .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
+        assertTrue(chart.getValue("high").toDouble() < 50_000, "Future bars must not enter the visible chart scale")
         compose.onNodeWithTag("replay-stop").performTextInput("99.50")
         compose.onNodeWithTag("replay-target").performTextInput("100.50")
         compose.onNodeWithTag("replay-buy").performClick()
@@ -25,5 +32,18 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 1 笔")
         compose.onNodeWithTag("replay-realized").assertTextContains("-2.50")
+    }
+
+    @Test fun openingReplayFromConnectedWorkspaceNeverSendsBrokerOrders() {
+        val broker = OfflineOrderBroker()
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = true).apply { paused.value = true }
+        compose.setContent { TradingScreen(runtime) }
+        compose.onNodeWithTag("quick-login-picker").performClick()
+        compose.onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
+        compose.onNodeWithTag("open-historical-replay").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-buy").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("replay-buy").performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        assertTrue(broker.placed.isEmpty(), "Replay must never use the connected broker account")
     }
 }
