@@ -28,6 +28,8 @@ class ContinuousContractsTest {
         var chartPenaltyRetries = 0
         var chartLimitRejections = 0
         var refusedQuotes = emptySet<String>()
+        var idOnlySymbols = emptySet<String>()
+        var inaccessibleSymbols = emptySet<String>()
         var olderBarSymbols = emptySet<String>()
         val dailyIds = mutableListOf<Long>()
         val cancelledCharts = mutableListOf<Long>()
@@ -98,6 +100,12 @@ class ContinuousContractsTest {
                         return
                     }
                     dailyRequests.add(body)
+                    val requested = body.str("symbol")!!
+                    val resolved = contracts.firstOrNull { it.long("id")?.toString() == requested }?.str("name") ?: requested
+                    if (resolved in inaccessibleSymbols || resolved in idOnlySymbols && requested == resolved) {
+                        delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"errorCode":"UnknownSymbol","errorText":"Symbol is inaccessible"}}]""")
+                        return
+                    }
                     if (penalty != null && body.str("p-ticket") == null) {
                         delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":$penalty}]""")
                         return
@@ -110,13 +118,13 @@ class ContinuousContractsTest {
                     val id = ++channelId
                     dailyIds.add(id.toLong())
                     val end = range.str("closestTimestamp") ?: range.str("asFarAsTimestamp")!!
-                    val barTime = if (body.str("symbol") in olderBarSymbols)
+                    val barTime = if (resolved in olderBarSymbols)
                         kotlin.time.Instant.fromEpochMilliseconds(timestamp(range.str("asFarAsTimestamp")!!)!! - 2 * 86_400_000).toString()
                     else "${end.take(10)}T00:00Z"
-                    val volume = if (body.str("symbol") == leader) 1000 else 10
+                    val volume = if (resolved == leader) 1000 else 10
                     val nextDate = kotlin.time.Instant.fromEpochMilliseconds(timestamp(range.str("asFarAsTimestamp")!!)!! + 86_400_000).toString()
                     val currentBar = if (currentDailyBar) {
-                        val currentVolume = if (body.str("symbol") == leader) 1 else 100_000
+                        val currentVolume = if (resolved == leader) 1 else 100_000
                         """,{"timestamp":"$nextDate","upVolume":$currentVolume,"downVolume":0}"""
                     } else ""
                     // Deliver data before the response to exercise subscription registration races.
@@ -124,8 +132,8 @@ class ContinuousContractsTest {
                         // The API treats a count limit as a different time-range strategy.
                         // Mixing it with bounds may return only the current, unfinished bar.
                         range.long("asMuchAsElements") != null -> """[{"timestamp":"$nextDate","upVolume":100000,"downVolume":0}]"""
-                        body.str("symbol") in currentOnlySymbols -> """[{"timestamp":"$nextDate","upVolume":100000,"downVolume":100000}]"""
-                        body.str("symbol") in emptySymbols -> "[]"
+                        resolved in currentOnlySymbols -> """[{"timestamp":"$nextDate","upVolume":100000,"downVolume":100000}]"""
+                        resolved in emptySymbols -> "[]"
                         missingVolume -> """[{"timestamp":"$barTime","upVolume":$volume}]"""
                         else -> """[{"timestamp":"$barTime","upVolume":$volume,"downVolume":0}$currentBar]"""
                     }
@@ -670,6 +678,27 @@ class ContinuousContractsTest {
         assertFailsWith<IllegalArgumentException> { select(volumes = mapOf("MESZ6" to 0, "MESH7" to 0)) }
         assertFailsWith<NoSuchElementException> { select(volumes = mapOf("MESZ6" to 10)) }
         assertFailsWith<IllegalArgumentException> { select("ES", mapOf("MESZ6" to 10, "MESH7" to 1000)) }
+    }
+
+    @Test fun unavailableNamesRetryTheValidatedContractIdsForFourProducts() = runTest {
+        for (root in listOf("MGC", "SIL", "MBT", "BTC")) {
+            val wire = Wire(root = root).apply { idOnlySymbols = setOf("${root}Z6", "${root}H7") }
+            val broker = ready(wire)
+            assertEquals("${root}Z6", broker.instruments.single { it.symbol == "@$root" }.executionSymbol, root)
+            assertEquals(setOf("200", "201"), wire.dailyRequests.mapNotNull { it.str("symbol") }.filter { it.all(Char::isDigit) }.toSet(), root)
+            assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
+        }
+    }
+
+    @Test fun inaccessibleNameAndIdDoNotInventZeroOrEnableOrders() = runTest {
+        val wire = Wire(root = "MGC").apply { inaccessibleSymbols = setOf("MGCH7") }
+        val broker = ready(wire)
+        val alias = broker.instruments.single { it.symbol == "@MGC" }
+        assertNull(alias.executionSymbol)
+        assertTrue(alias.executionLabel.contains("MGCH7"), alias.executionLabel)
+        val order = OrderRequest("MGCZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MGC")
+        assertFalse(broker.openSession("100").placeOrder("inaccessible", order).accepted)
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
     }
 
     @Test fun missingDailyVolumeCannotBecomeAZeroVolumeCandidate() = runTest {

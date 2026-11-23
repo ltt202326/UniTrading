@@ -673,11 +673,21 @@ class TradovateBroker(
     private suspend fun rankContinuous(productId: Long, symbol: String, progress: suspend (Int, Int) -> Unit): VolumeLeader {
         val root = symbol.removePrefix("@")
         val completedChecked = mutableSetOf<String>()
+        // Only IDs from the validated candidate list may be used for the alternative chart request.
+        val contractIds = mutableMapOf<String, Long>()
         suspend fun rank(cached: Boolean) = selectVolumeLeader(productId, root, now(),
-            read = { path -> rest("GET", path) as? JsonArray ?: error("合约或交易时段返回无效") },
+            read = { path -> (rest("GET", path) as? JsonArray ?: error("合约或交易时段返回无效")).also { rows ->
+                if (path.startsWith("contract/ldeps?")) rows.forEach { row ->
+                    (row as? JsonObject)?.let { contract ->
+                        val name = contract.str("name")
+                        val id = contract.long("id")
+                        if (name != null && id != null && id > 0) contractIds[name] = id
+                    }
+                }
+            } },
             volume = { name, session ->
                 (if (cached) lock.withLock { continuousEvidence.volume(name, session.day) } else null)
-                    ?: completedDailyVolume(name, session).also { count -> lock.withLock {
+                    ?: completedDailyVolume(name, session, contractIds[name]).also { count -> lock.withLock {
                         continuousEvidence.remember(name, session.day, count)
                         if (session.refreshCompletedVolume) completedChecked.add(name)
                     } }
@@ -685,23 +695,33 @@ class TradovateBroker(
         val leader = rank(cached = true)
         val name = requireNotNull(leader.contract.str("name"))
         if (!leader.session.refreshCompletedVolume || lock.withLock { name in completedChecked }) return leader
-        if (completedDailyVolume(name, leader.session) == leader.volume) return leader
+        if (completedDailyVolume(name, leader.session, leader.contract.long("id")) == leader.volume) return leader
         // A corrected completed volume makes this product's cached values for the date suspect.
         lock.withLock { continuousEvidence.forget(root, leader.session.day) }
         return rank(cached = false)
     }
 
     /** One trade date per request, always cancelled afterwards: rankings never hold server chart slots. */
-    private suspend fun completedDailyVolume(symbol: String, session: CompletedSession): Long = volumeSlots.withPermit {
+    private suspend fun completedDailyVolume(symbol: String, session: CompletedSession, contractId: Long? = null): Long = volumeSlots.withPermit {
         val socket = checkNotNull(marketSocket) { "行情连接不可用" }
         check(marketReady) { "行情尚未就绪" }
         val overflow = lock.withLock { earlyChartOverflow }
-        val body = buildJsonObject {
-            put("symbol", symbol)
+        fun body(useId: Boolean) = buildJsonObject {
+            if (useId) put("symbol", requireNotNull(contractId)) else put("symbol", symbol)
             put("chartDescription", chartDescription(Timeframe.D1))
             put("timeRange", dailyVolumeRange(session))
         }
-        val response = requestMarketChart(socket, body)
+        val response = try { requestMarketChart(socket, body(false)) }
+        catch (error: TradovateRemoteException) {
+            // Tradovate accepts a contract ID in the same field. A successful ID request must
+            // still pass all RealTime, timestamp, volume and end-of-history checks below.
+            if (contractId == null || error.message?.contains("Symbol is inaccessible", ignoreCase = true) != true)
+                throw TradovateRemoteException(error.status, "$symbol 日成交量：${safeMessage(error.message ?: "请求失败")}")
+            try { requestMarketChart(socket, body(true)) }
+            catch (retry: TradovateRemoteException) {
+                throw TradovateRemoteException(retry.status, "$symbol（合约 ID $contractId）日成交量不可用：${safeMessage(retry.message ?: "请求失败")}")
+            }
+        }
         val ids = listOfNotNull(response["historicalId"] as? JsonPrimitive, response["realtimeId"] as? JsonPrimitive).distinct()
         try {
             require(response.str("mode") == null || response.str("mode") == "RealTime") { "日成交量行情权限或模式不可用" }
