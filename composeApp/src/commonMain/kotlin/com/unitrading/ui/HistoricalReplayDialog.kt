@@ -151,12 +151,27 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
         }.onSuccess { message = null; accept(it); started = true }
             .onFailure { message = it.message ?: "无法模拟下单" }
     }
-    val noTrading = remember { ChartOrderActions(
+    val localChartActions = ChartOrderActions(
         estimateDraft = { it to OrderPreview(null, errors = listOf("回放请使用模拟订单面板")) },
         onDraftEntry = {}, onDraftProtection = { _, _ -> }, editPending = false,
         estimatePending = { _, _ -> OrderPreview(null) }, onPendingEntry = { _, _ -> }, editPendingProtection = false,
-        estimatePendingProtection = { _, _, _ -> OrderPreview(null) }, onPendingProtection = { _, _, _ -> }, onProtection = { _, _, _ -> },
-    ) }
+        estimatePendingProtection = { _, _, _ -> OrderPreview(null) }, onPendingProtection = { _, _, _ -> },
+        onProtection = { position, sl, tp -> runCatching { state.protect(spec, position, current.close, sl, tp) }
+            .onSuccess { state = it; message = null }.onFailure { message = it.message } },
+        onLineAction = { action -> runCatching {
+            when (action) {
+                is LineAction.ClosePosition -> accept(state.close(spec, action.position, current.close, current.timeMs, "手动平仓"))
+                is LineAction.CancelOrder -> state = state.copy(pending = state.pending.filterNot { "replay-order-${it.id}" == action.order.id })
+                is LineAction.RemoveProtection -> state = state.protect(spec, action.position, current.close,
+                    if (action.stop) null else action.position.stopLoss, if (action.stop) action.position.takeProfit else null)
+                else -> Unit
+            }
+        }.onFailure { message = it.message } }, addPositionProtection = true, removeProtection = true,
+    )
+    val chartOrders = remember(state.pending, spec) { state.pending.map { order ->
+        PendingOrder("replay-order-${order.id}", OrderRequest(spec.executionSymbol ?: spec.symbol, order.side, order.kind,
+            order.quantity, order.price, order.stop, order.target), createdAtMs = current.timeMs, editable = false, protectionEditable = false)
+    } }
     val visible = remember(bars, state.index, sourceFrame, chartFrame) {
         runCatching { replayChartBars(bars, state.index, sourceFrame, chartFrame, spec.symbol, input.regular) }.getOrElse { emptyList() }
     }
@@ -193,7 +208,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                 TradingChart(accountKey = "local-historical-replay", instrument = spec,
                     quote = Quote(current.close, current.close, current.timeMs), candles = visible, timeframe = chartFrame,
                     onTimeframe = {}, positions = state.positions, trades = emptyList(), selectedPositionId = null,
-                    focusedTrade = null, draft = null, preview = null, orders = emptyList(), actions = noTrading,
+                    focusedTrade = null, draft = null, preview = null, orders = chartOrders, actions = localChartActions,
                     onSide = { place(it) },
                     modifier = Modifier.weight(1f).fillMaxHeight(), indicators = indicatorSettings.indicators,
                     chrome = ChartChrome(drawings = drawings, sharedToolbar = true, desktopAxisStyle = true, showNavigation = false,
