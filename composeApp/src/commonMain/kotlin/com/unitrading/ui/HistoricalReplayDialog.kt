@@ -81,7 +81,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
                 Text(loaded?.second ?: "正在等待该品种的历史 K 线；数据范围取决于券商。")
                 TextButton(onClick = onDismiss) { Text("关闭") }
             } else key(selected.symbol, rawFrame) {
-                ReplayWorkspace(input.copy(instrument = selected), bars, rawFrame, fineHistory,
+                ReplayWorkspace(input.copy(instrument = selected), bars, rawFrame,
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
                         selected = it; fineSnapshot = null; watch(symbol, Timeframe.M1)
                     } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, onDismiss = onDismiss)
@@ -92,7 +92,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
 
 @Composable
 private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initialFrame: Timeframe,
-    fineHistory: List<Candle>, changeSymbol: (String) -> Unit,
+    changeSymbol: (String) -> Unit,
     history: (String, Timeframe) -> List<Candle>, watch: (String, Timeframe) -> Unit,
     revision: Long, drawingDefaults: DrawingLibrary?, onDismiss: () -> Unit) {
     val spec = input.instrument
@@ -130,7 +130,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     val chartFrame = frames[activeChart] ?: input.timeframe
     val chartSessions = remember { mutableStateMapOf<String, Boolean>() }
     val regular = chartSessions[activeChart] ?: input.regular
-    var waitForFine by remember { mutableStateOf(false) }
+    var pendingSource by remember { mutableStateOf<Timeframe?>(null) }
     var requestedRegularChart by remember { mutableStateOf<String?>(null) }
     var priceAxis by remember { mutableStateOf(input.priceAxis) }
     val stepChoices = remember(chartFrame, sourceFrame) { replayStepOptions(chartFrame, sourceFrame) }
@@ -145,23 +145,38 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         ChartDrawings(local, drawingDefaults ?: local).also { it.bind(spec.symbol) }
     }
     val current = bars[state.index]
-    fun useFineHistory(data: List<Candle>): Boolean {
+    fun useFinerHistory(frame: Timeframe, data: List<Candle>): Boolean {
         val sorted = data.sortedBy(Candle::timeMs)
         val end = current.timeMs + sourceFrame.millis
-        val index = sorted.binarySearch { (it.timeMs + Timeframe.M1.millis).compareTo(end) }.let { if (it < 0) -it - 2 else it }
-        if (index !in sorted.indices || sorted[index].timeMs + Timeframe.M1.millis != end) {
-            message = "券商的 1 分钟历史未覆盖当前回放时刻，请选择其他起点"
+        val index = sorted.binarySearch { (it.timeMs + frame.millis).compareTo(end) }.let { if (it < 0) -it - 2 else it }
+        if (index !in sorted.indices || sorted[index].timeMs + frame.millis != end) {
+            message = "券商的 ${frame.label} 历史未覆盖当前回放时刻，请选择其他起点"
             return false
         }
         state = state.copy(index = index); start = index.coerceAtMost(sorted.lastIndex - 1)
-        bars = sorted.toList(); sourceFrame = Timeframe.M1; message = null
+        bars = sorted.toList(); sourceFrame = frame; message = null
         return true
     }
-    LaunchedEffect(waitForFine, fineHistory) {
-        if (waitForFine && fineHistory.size >= 2) {
-            waitForFine = false
-            if (useFineHistory(fineHistory)) requestedRegularChart?.let { chartSessions[it] = true }
+    val pendingBars = remember(revision, pendingSource, spec.symbol) {
+        pendingSource?.let { history(spec.symbol, it) }.orEmpty()
+    }
+    LaunchedEffect(pendingSource, pendingBars) {
+        val frame = pendingSource
+        if (frame != null && pendingBars.size >= 2) {
+            pendingSource = null
+            if (useFinerHistory(frame, pendingBars)) requestedRegularChart?.let { chartSessions[it] = true }
             requestedRegularChart = null
+        }
+    }
+    fun requestFinerHistory(frame: Timeframe, regularChart: String? = null) {
+        playing = false
+        watch(spec.symbol, frame)
+        val cached = history(spec.symbol, frame)
+        if (cached.size >= 2) {
+            if (useFinerHistory(frame, cached) && regularChart != null) chartSessions[regularChart] = true
+        } else {
+            pendingSource = frame; requestedRegularChart = regularChart
+            message = "正在向券商获取 ${frame.label} 历史…"
         }
     }
     fun accept(next: ReplayState) {
@@ -286,11 +301,10 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         if (started) { playing = false; switchTo = sym } else changeSymbol(sym)
                     }
                 }, chartFrame, { frame ->
+                    pendingSource = null; requestedRegularChart = null
                     frames[activeChart] = frame
-                    if (frame == Timeframe.M1 && sourceFrame.seconds > Timeframe.M1.seconds) {
-                        playing = false
-                        watch(spec.symbol, Timeframe.M1)
-                        if (fineHistory.size >= 2) useFineHistory(fineHistory) else { waitForFine = true; requestedRegularChart = null; message = "正在向券商获取 1 分钟历史…" }
+                    if (frame.seconds < sourceFrame.seconds && sourceFrame.seconds % frame.seconds == 0) {
+                        requestFinerHistory(frame)
                     } else message = null
                 }, input.intervals, emptyList(), ChartToggle("指标 ${indicatorSettings.indicators.size}", true) { showIndicators = true },
                     Modifier.fillMaxWidth(), additionalControls = {
@@ -299,11 +313,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             if (activeChart !in listOf("main", "split1", "split2", "split3").take(next.count)) activeChart = "main"
                         }
                         ChartSessionControls(if (regular) ChartSession.REGULAR else ChartSession.ELECTRONIC) { selected ->
+                            pendingSource = null; requestedRegularChart = null
                             val nextRegular = selected == ChartSession.REGULAR
-                            if (nextRegular && sourceFrame.seconds in (Timeframe.M1.seconds + 1) until Timeframe.DAY) {
-                                playing = false; watch(spec.symbol, Timeframe.M1)
-                                if (fineHistory.size >= 2) { if (useFineHistory(fineHistory)) chartSessions[activeChart] = true }
-                                else { waitForFine = true; requestedRegularChart = activeChart; message = "常规时段需要 1 分钟数据，正在向券商获取…" }
+                            val unavailable = if (nextRegular) chartSessionCandles(emptyList(), spec.symbol, Timeframe.M1, true).second else null
+                            if (unavailable != null) message = unavailable
+                            else if (nextRegular && sourceFrame.seconds in (Timeframe.M1.seconds + 1) until Timeframe.DAY) {
+                                requestFinerHistory(Timeframe.M1, activeChart)
                             } else { chartSessions[activeChart] = nextRegular; message = null }
                         }
                     }, singleRow = true)

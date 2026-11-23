@@ -156,4 +156,25 @@ class HistoricalReplayUiTest {
         compose.onNodeWithText("模拟持仓").assertExists()
         compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 MES 1分钟")
     }
+
+    @Test fun missingFiveMinuteHistoryCanRebaseAFifteenMinuteReplay() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val coarse = (0..3).map { Candle(it * 900_000L, 10_000, 10_025, 9_975, 10_000) }
+        val fine = (0..20).map { Candle(it * 300_000L, 10_000, 10_025, 9_975, 10_000) }
+        var available by mutableStateOf(false)
+        var revision by mutableLongStateOf(0)
+        val requested = mutableListOf<Pair<String, Timeframe>>()
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M15, false,
+            ChartTimeZone.SHANGHAI, coarse, emptyList(), skipConfirmation = true), revision,
+            history = { _, frame -> if (available && frame == Timeframe.M5) fine else emptyList() },
+            watch = { symbol, frame -> requested.add(symbol to frame) }) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("interval-inline-5").performScrollTo().performClick()
+        compose.runOnIdle { assertTrue(("MES" to Timeframe.M5) in requested); available = true; revision++ }
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("replay-step-5").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("模拟持仓").assertExists()
+        compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 MES 5分钟")
+    }
 }
