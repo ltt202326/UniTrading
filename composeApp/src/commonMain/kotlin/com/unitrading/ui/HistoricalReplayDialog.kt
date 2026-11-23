@@ -25,8 +25,12 @@ internal data class ReplayInput(val instrument: Instrument, val timeframe: Timef
 /** A separate modal and ledger: no AccountSession is passed into the replay at any point. */
 @Composable
 internal fun HistoricalReplayDialog(input: ReplayInput, onDismiss: () -> Unit) {
-    val loaded by produceState<Pair<List<Candle>, String?>?>(null, input) {
-        value = withContext(Dispatchers.Default) {
+    val prepared = remember(input) {
+        if (input.raw.size <= 500) chartSessionCandles(input.raw.sortedBy(Candle::timeMs), input.instrument.symbol, input.timeframe, input.regular)
+        else null
+    }
+    val loaded by produceState<Pair<List<Candle>, String?>?>(prepared, input) {
+        if (prepared == null) value = withContext(Dispatchers.Default) {
             chartSessionCandles(input.raw.sortedBy(Candle::timeMs), input.instrument.symbol, input.timeframe, input.regular)
         }
     }
@@ -167,7 +171,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, onDismiss: (
                         .onSuccess { state = it; message = null }.onFailure { message = it.message } }) { Text("模拟平仓") }
                 }
                 state.trades.asReversed().take(30).forEach { t -> Text("${t.reason} ${money(t.pnlMicros, true)} · ${spec.formatPrice(t.exit)}", style = MaterialTheme.typography.bodySmall) }
-                Text("仅使用 K 线 OHLC；同一根同时触及止损和止盈时先按止损。止损跳空按更差开盘价成交。无点差和滑点，手续费按合约默认值。", style = MaterialTheme.typography.bodySmall)
+                Text("仅使用 K 线 OHLC；开盘未触及保护价、同一根又同时触及止损止盈时先按止损。止损跳空按更差开盘价成交。无点差和滑点；手续费按合约默认值，默认零不代表券商免费。", style = MaterialTheme.typography.bodySmall)
             }
         }
     }

@@ -16,6 +16,15 @@ import kotlin.test.assertTrue
 
 class HistoricalReplayUiTest {
     @get:Rule val compose = createComposeRule()
+    private fun awaitReplay() {
+        try { compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-buy").fetchSemanticsNodes().isNotEmpty() } }
+        catch (error: Throwable) {
+            val dialog = compose.onAllNodesWithTag("historical-replay").fetchSemanticsNodes().size
+            val loading = compose.onAllNodesWithText("正在准备历史数据…").fetchSemanticsNodes().size
+            val missing = compose.onAllNodesWithText("当前图表没有足够的历史 K 线，请等待数据加载后重试。").fetchSemanticsNodes().size
+            throw AssertionError("Replay not ready: dialog=$dialog loading=$loading missing=$missing", error)
+        }
+    }
 
     @Test fun replayTradesOnlyLocallyAndAppliesStopOnNextBar() {
         val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
@@ -24,7 +33,7 @@ class HistoricalReplayUiTest {
             Candle(1_700_000_060_000, 10_000, 10_075, 9_925, 10_000),
             Candle(1_700_000_120_000, 90_000, 90_025, 89_975, 90_000))
         compose.setContent { TradingTheme { Box(Modifier.fillMaxSize()) { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false, ChartTimeZone.SHANGHAI, bars, emptyList())) {} } } }
-        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-buy").fetchSemanticsNodes().isNotEmpty() }
+        awaitReplay()
         val chart = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription]
             .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
         assertTrue(chart.getValue("high").toDouble() < 50_000, "Future bars must not enter the visible chart scale")
@@ -44,7 +53,7 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("quick-login-picker").performClick()
         compose.onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
         compose.onNodeWithTag("open-historical-replay").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-buy").fetchSemanticsNodes().isNotEmpty() }
+        awaitReplay()
         compose.onNodeWithTag("replay-buy").performClick()
         compose.onNodeWithTag("replay-next").performClick()
         assertTrue(broker.placed.isEmpty(), "Replay must never use the connected broker account")
