@@ -1345,6 +1345,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     var replayPrepared by remember { mutableStateOf<ReplayPrepared?>(null) }
                     val replaySeries = remember { mutableStateMapOf<Pair<String, Timeframe>, List<Candle>>() }
                     val replayLoading = remember { mutableStateMapOf<Pair<String, Timeframe>, Boolean>() }
+                    val replayJobs = remember { mutableMapOf<Pair<String, Timeframe>, kotlinx.coroutines.Job>() }
                     var replayGeneration by remember { mutableIntStateOf(0) }
                     var replayRevision by remember { mutableLongStateOf(0) }
                     var replayError by remember { mutableStateOf<String?>(null) }
@@ -1386,6 +1387,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (replaySetup) ReplaySetupDialog(plugin, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
                         market.simulatedTimeMs, onDismiss = { replaySetup = false }, onReady = { ready ->
                             replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
+                            replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear()
                             replaySeries.clear(); replaySeries.putAll(ready.data); replayLoading.clear(); replayRevision++
                             val chosen = ready.instruments.firstOrNull { it.symbol == selectedInstrument.symbol } ?: ready.instruments.first()
                             replayInput = ReplayInput(chosen, selectedFrame, chartPreferences.sessionForChart(target) == ChartSession.REGULAR,
@@ -1400,7 +1402,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             if (ready != null && ready.instruments.any { it.symbol == sym } && series !in replaySeries && series !in replayLoading) {
                                 replayLoading[series] = true
                                 val generation = replayGeneration
-                                scope.launch {
+                                val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                                     try {
                                         val (from, until) = ready.range.forFrame(frame)
                                         val result = plugin.historicalRange(sym, frame, from, until)
@@ -1411,13 +1413,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         }
                                     } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
                                     catch (failure: Exception) { if (generation == replayGeneration) replayError = "读取 $sym ${frame.label} 失败：${failure.message ?: "请重试"}" }
-                                    finally { if (generation == replayGeneration) replayLoading.remove(series) }
+                                    finally { if (generation == replayGeneration) { replayLoading.remove(series); replayJobs.remove(series) } }
                                 }
+                                replayJobs[series] = job
+                                job.start()
                             }
                         },
                         drawingDefaults = runtime.drawingLibrary,
                         historyError = replayError,
-                        onDismiss = { replayGeneration++; replaySeries.clear(); replayLoading.clear(); replayPrepared = null; replayError = null; replayInput = null }) }
+                        onDismiss = { replayGeneration++; replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear(); replaySeries.clear(); replayLoading.clear(); replayPrepared = null; replayError = null; replayInput = null }) }
                 }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
                     val selected = workspaceSelected[workspace] ?: workspace
