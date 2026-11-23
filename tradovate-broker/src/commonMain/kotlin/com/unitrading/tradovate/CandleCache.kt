@@ -22,12 +22,19 @@ internal fun chartBackfillRange(anchor: Long, closest: Long) = buildJsonObject {
 
 internal fun mergeCandles(previous: List<Candle>, incoming: List<Candle>, maxBars: Int = CHART_BARS): List<Candle> {
     if (incoming.isEmpty()) return previous
+    require(maxBars >= 0)
+    if (maxBars == 0) return emptyList()
     // The live stream normally revises only the newest bar; avoid rebuilding a large map on every tick.
     val latest = previous.lastOrNull()
     val update = incoming.singleOrNull()
     if (latest != null && update != null && update.timeMs >= latest.timeMs) {
         if (latest == update) return previous
-        return (if (update.timeMs == latest.timeMs) previous.dropLast(1) + update else previous + update).takeLast(maxBars)
+        val keep = previous.size - if (update.timeMs == latest.timeMs) 1 else 0
+        val from = maxOf(0, keep + 1 - maxBars)
+        val result = ArrayList<Candle>(minOf(maxBars, keep + 1))
+        for (i in from until keep) result.add(previous[i])
+        result.add(update)
+        return result
     }
     // History pages arrive mostly in order, often older than the existing data. Merge them in linear time
     // instead of repeatedly building and sorting a map of the entire extended history.
