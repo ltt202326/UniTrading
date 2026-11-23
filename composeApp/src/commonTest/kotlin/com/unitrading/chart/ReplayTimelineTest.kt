@@ -3,8 +3,15 @@ package com.unitrading.chart
 import com.unitrading.broker.Candle
 import com.unitrading.broker.Timeframe
 import kotlin.test.*
+import kotlin.time.Instant
 
 class ReplayTimelineTest {
+    @Test fun regularSessionFiltersMinuteBarsBeforeAggregation() {
+        val before = Instant.parse("2026-11-23T14:29:00Z").toEpochMilliseconds()
+        val bars = (0..2).map { Candle(before + it * 60_000L, 100L + it, 110L + it, 90L + it, 105L + it) }
+        val visible = replayChartBars(bars, 1, Timeframe.M1, Timeframe.M1, "@MES", true)
+        assertEquals(listOf(bars[1]), visible)
+    }
     @Test fun brokerHistoryDoesNotRevealUnfinishedOrFutureCandles() {
         val bars = (0..3).map { Candle(it * 300_000L, 100, 110, 90, 100) }
         assertEquals(0, replayCompletedBrokerBars(bars, Timeframe.M5, 299_999).size)

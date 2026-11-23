@@ -131,6 +131,8 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("chart-session-menu").performScrollTo().performClick()
         compose.onNodeWithTag("chart-session-REGULAR").performClick()
         compose.onNodeWithTag("chart-session-menu").assertTextContains("RTH", substring = true)
+        compose.onNodeWithTag("replay-chart-main").performTouchInput { click(center) }
+        compose.onNodeWithTag("chart-session-menu").assertTextContains("ETH", substring = true)
     }
 
     @Test fun missingFineHistoryIsRequestedWithoutClearingSimulatedPosition() {
