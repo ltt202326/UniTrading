@@ -35,8 +35,6 @@ internal data class ReplayState(
         require(spec.lotStepHundredths > 0 && quantity > 0 && quantity >= spec.minLotsHundredths && quantity <= spec.maxLotsHundredths && quantity % spec.lotStepHundredths == 0L) { "数量不符合合约手数限制" }
         val entry = candle.close
         require(entry > 0 && spec.tickSize > 0 && entry % spec.tickSize == 0L) { "当前 K 线价格无效" }
-        require(stop == null || stop > 0 && stop % spec.tickSize == 0L && (if (side == Side.BUY) stop < entry else stop > entry)) { "止损价格无效或方向不正确" }
-        require(target == null || target > 0 && target % spec.tickSize == 0L && (if (side == Side.BUY) target > entry else target < entry)) { "止盈价格无效或方向不正确" }
         var remaining = quantity
         var state = this
         // Futures accounts are netted: opposite orders reduce existing lots in opening order before reversing.
@@ -56,6 +54,8 @@ internal data class ReplayState(
             remaining -= closedLots
         }
         if (remaining == 0L) return state
+        require(stop == null || stop > 0 && stop % spec.tickSize == 0L && (if (side == Side.BUY) stop < entry else stop > entry)) { "止损价格无效或方向不正确" }
+        require(target == null || target > 0 && target % spec.tickSize == 0L && (if (side == Side.BUY) target > entry else target < entry)) { "止盈价格无效或方向不正确" }
         val fee = commission(spec, remaining)
         val position = Position("replay-${state.nextId}", spec.executionSymbol ?: spec.symbol, side, remaining, entry, candle.timeMs,
             stopLoss = stop, takeProfit = target, marginMicros = 0, entryFeeMicros = fee)
@@ -91,8 +91,8 @@ internal data class ReplayState(
                 state = state.close(spec, p, price, next.timeMs, "止损")
             } else if (openTarget || targetHit) state = state.close(spec, p, p.takeProfit!!, next.timeMs, "止盈")
         }
-        // Newly triggered orders are not retrospectively matched against this candle's earlier high/low.
-        // Their protective orders become active on the following source candle.
+        // Within a source candle the entry/exit path is unknown. Conservatively assume a touched stop
+        // may occur after the entry; only take profit in this candle when the entry happened at its open.
         for (order in pending) {
             val hit = when (order.kind) {
                 OrderKind.LIMIT -> if (order.side == Side.BUY) next.low <= order.price else next.high >= order.price
@@ -105,8 +105,24 @@ internal data class ReplayState(
                 else -> order.price
             }
             state = state.copy(pending = state.pending.filterNot { it.id == order.id })
+            val beforeIds = state.positions.map { it.id }.toSet()
             val opened = runCatching { state.open(spec, next.copy(close = fill), order.side, order.quantity, order.stop, order.target) }
             state = opened.getOrElse { state.copy(lastNotice = "挂单触发时保护价无效，已取消该模拟挂单") }
+            val newPosition = state.positions.firstOrNull { it.id !in beforeIds }
+            if (newPosition != null) {
+                val openedAtBarOpen = when (order.kind) {
+                    OrderKind.LIMIT -> if (order.side == Side.BUY) next.open <= order.price else next.open >= order.price
+                    OrderKind.STOP -> if (order.side == Side.BUY) next.open >= order.price else next.open <= order.price
+                    OrderKind.MARKET -> false
+                }
+                val hitStop = newPosition.stopLoss?.let { if (newPosition.side == Side.BUY) next.low <= it else next.high >= it } == true
+                val hitTarget = newPosition.takeProfit?.let { if (newPosition.side == Side.BUY) next.high >= it else next.low <= it } == true
+                if (hitStop) {
+                    val stop = newPosition.stopLoss!!
+                    val exit = if (!openedAtBarOpen) stop else if (newPosition.side == Side.BUY) minOf(next.open, stop) else maxOf(next.open, stop)
+                    state = state.close(spec, newPosition, exit, next.timeMs, "止损")
+                } else if (openedAtBarOpen && hitTarget) state = state.close(spec, newPosition, newPosition.takeProfit!!, next.timeMs, "止盈")
+            }
         }
         return state
     }

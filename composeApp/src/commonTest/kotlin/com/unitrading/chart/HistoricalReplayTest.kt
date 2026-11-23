@@ -43,17 +43,16 @@ class HistoricalReplayTest {
         assertTrue(closed.positions.isEmpty())
     }
 
-    @Test fun pendingLimitFillsOnlyOnLaterBarAndProtectionStartsFollowingBar() {
+    @Test fun pendingLimitAssumesStopFirstWhenSameBarPathIsUnknown() {
         val queued = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_950, 9_900, 10_050, 10_000)
         assertTrue(queued.positions.isEmpty())
         val untouched = queued.advance(spec, Candle(2, 10_000, 10_025, 9_975, 10_000))
         assertEquals(1, untouched.pending.size)
         val filled = untouched.advance(spec, Candle(3, 10_000, 10_050, 9_875, 9_950))
         assertTrue(filled.pending.isEmpty())
-        assertEquals(9_950L, filled.positions.single().entryPrice)
-        assertTrue(filled.trades.isEmpty())
-        val stopped = filled.advance(spec, Candle(4, 9_950, 9_975, 9_875, 9_925))
-        assertEquals("止损", stopped.trades.single().reason)
+        assertTrue(filled.positions.isEmpty())
+        assertEquals(9_950L, filled.trades.single().position.entryPrice)
+        assertEquals("止损", filled.trades.single().reason)
     }
 
     @Test fun stopEntryGapsAtOpenAndInvalidBracketIsCancelled() {
@@ -66,7 +65,7 @@ class HistoricalReplayTest {
 
     @Test fun oppositeOrdersReduceThenReverseTheNetPosition() {
         val long = ReplayState(0).open(spec, start, Side.BUY, 200, null, null)
-        val reduced = long.open(spec, start.copy(close = 10_050), Side.SELL, 100, null, null)
+        val reduced = long.open(spec, start.copy(close = 10_050), Side.SELL, 100, 9_950, 10_100)
         assertEquals(100L, reduced.positions.single().lotsHundredths)
         assertEquals(Side.BUY, reduced.positions.single().side)
         assertEquals(1_500_000L, reduced.trades.single().pnlMicros)

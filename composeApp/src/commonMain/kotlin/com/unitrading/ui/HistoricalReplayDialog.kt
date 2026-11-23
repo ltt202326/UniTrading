@@ -309,7 +309,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                         .onSuccess { message = null; accept(it) }.onFailure { message = it.message } }) { Text("模拟平仓") }
                 }
                 state.trades.asReversed().take(30).forEach { t -> Text("${t.reason} ${money(t.pnlMicros, true)} · ${spec.formatPrice(t.exit)}", style = MaterialTheme.typography.bodySmall) }
-                Text("净持仓按先开先平抵消反向订单。仅使用 K 线 OHLC；同根同时触及止损止盈按止损。挂单成交后的保护单从下一根 K 线生效。无点差和滑点；手续费采用合约默认值。回撤仅在 K 线收盘时检查，EOD 以芝加哥 17:00 已实现余额更新；规则与券商实际规定可能不同。", style = MaterialTheme.typography.bodySmall)
+                Text("净持仓按先开先平抵消反向订单。仅使用 K 线 OHLC；同根触及止损按保守成交，挂单非开盘成交时同根止盈不计。无点差和滑点；手续费采用合约默认值。回撤仅在 K 线收盘时检查，EOD 以芝加哥 17:00 已实现余额更新；规则与券商实际规定可能不同。", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
