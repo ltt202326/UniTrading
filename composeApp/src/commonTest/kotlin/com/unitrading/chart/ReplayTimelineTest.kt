@@ -17,4 +17,10 @@ class ReplayTimelineTest {
         val bar = Candle(0, 100, 100, 100, 100)
         assertFailsWith<IllegalArgumentException> { replayChartBars(listOf(bar), 0, Timeframe.M5, Timeframe.M1, "@MES", false) }
     }
+
+    @Test fun dailyDataIsUsedDirectlyAndIsNotSynthesizedFromMinuteData() {
+        val daily = listOf(Candle(0, 100, 120, 90, 110), Candle(86_400_000, 110, 130, 100, 120))
+        assertEquals(listOf(daily.first()), replayChartBars(daily, 0, Timeframe.D1, Timeframe.D1, "@MES", false))
+        assertFailsWith<IllegalArgumentException> { replayChartBars(daily, 0, Timeframe.M1, Timeframe.D1, "@MES", false) }
+    }
 }

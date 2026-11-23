@@ -48,10 +48,11 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
         if (raw.size <= 500) chartSessionCandles(raw.sortedBy(Candle::timeMs), selected.symbol, rawFrame, input.regular)
         else null
     }
-    val loaded by produceState<Pair<List<Candle>, String?>?>(prepared, raw, selected, rawFrame) {
-        if (prepared == null) value = withContext(Dispatchers.Default) {
+    val loaded by key(raw, selected, rawFrame) { produceState<Pair<List<Candle>, String?>?>(prepared, raw, selected, rawFrame) {
+        value = prepared ?: withContext(Dispatchers.Default) {
             chartSessionCandles(raw.sortedBy(Candle::timeMs), selected.symbol, rawFrame, input.regular)
         }
+    }
     }
     Dialog(onDismissRequest = {}, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false, dismissOnClickOutside = false)) {
         Surface(Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f).testTag("historical-replay"),
@@ -94,6 +95,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     var message by remember { mutableStateOf<String?>(null) }
     var confirmReset by remember { mutableStateOf(false) }
     var confirmExit by remember { mutableStateOf(false) }
+    var switchTo by remember { mutableStateOf<String?>(null) }
     var startTime by remember { mutableStateOf("") }
     var orderKind by remember { mutableStateOf(OrderKind.MARKET) }
     var orderPrice by remember { mutableStateOf("") }
@@ -104,7 +106,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     var drawdownMode by remember { mutableStateOf(ReplayDrawdown.STATIC) }
     var riskConfig by remember { mutableStateOf(ReplayRiskConfig(50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.STATIC)) }
     var risk by remember { mutableStateOf(ReplayRiskState.initial(riskConfig)) }
-    var chartFrame by remember { mutableStateOf(input.timeframe) }
+    var chartFrame by remember { mutableStateOf(if (input.timeframe.seconds >= Timeframe.DAY && sourceFrame != input.timeframe) sourceFrame else input.timeframe) }
     var showIndicators by remember { mutableStateOf(false) }
     val indicatorController = remember { IndicatorController(MemorySnapshotStore()) }
     val indicatorSettings by indicatorController.settings.collectAsState()
@@ -159,6 +161,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
         runCatching { replayChartBars(bars, state.index, sourceFrame, chartFrame, spec.symbol, input.regular) }.getOrElse { emptyList() }
     }
     val realized = remember(state.trades) { runCatching { state.trades.fold(0L) { sum, trade -> checkedAdd(sum, trade.pnlMicros) } }.getOrNull() }
+    val analysis = remember(state.trades) { runCatching { replayAnalysis(state.trades) }.getOrNull() }
     val floating = remember(state.positions, current) { runCatching {
         state.positions.fold(0L) { sum, p ->
             val gross = grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, current.close)
@@ -174,7 +177,9 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 ChartToolbar(spec, input.instruments, { sym ->
-                    if (started) message = "请先结束当前回放，再切换品种" else changeSymbol(sym)
+                    if (sym != spec.symbol) {
+                        if (started) { playing = false; switchTo = sym } else changeSymbol(sym)
+                    }
                 }, chartFrame, { frame ->
                     if (frame.seconds < sourceFrame.seconds || frame.seconds % sourceFrame.seconds != 0 ||
                         (frame.seconds >= Timeframe.DAY && frame != sourceFrame))
@@ -198,7 +203,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                     TextButton(onClick = { playing = !playing; started = true }, enabled = state.index < bars.lastIndex && !risk.failed, modifier = Modifier.testTag("replay-play")) { Text(if (playing) "暂停" else "播放") }
                     TextButton(onClick = { playing = false; step() }, enabled = state.index < bars.lastIndex && !risk.failed, modifier = Modifier.testTag("replay-next")) { Text("前进") }
                     listOf(1, 5).forEach { n -> TextButton(onClick = { stepBars = n }) {
-                        Text("${sourceFrame.seconds * n / 60}分/步", color = if (stepBars == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                        Text("${n}根/步", color = if (stepBars == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                     } }
                     listOf(1, 2, 5, 10).forEach { n -> TextButton(onClick = { speed = n }) { Text("${n}x", color = if (speed == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) } }
                     TextButton(onClick = { playing = false; confirmReset = true }) { Text("重选起点") }
@@ -255,6 +260,11 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                 val completed = state.trades.size
                 val wins = state.trades.count { it.pnlMicros > 0 }
                 Text("胜率 ${if (completed == 0) "—" else "${wins * 100 / completed}%"} · 平均盈亏 ${if (completed == 0 || realized == null) "—" else money(realized / completed)}", style = MaterialTheme.typography.bodySmall)
+                analysis?.let { stats ->
+                    Text("总盈利 ${money(stats.grossProfit)} · 总亏损 ${money(stats.grossLoss)}", style = MaterialTheme.typography.bodySmall)
+                    Text("平仓权益最大回撤 ${money(stats.maxClosedDrawdown)}", style = MaterialTheme.typography.bodySmall)
+                    Text("最佳 ${stats.best?.let { money(it, true) } ?: "—"} · 最差 ${stats.worst?.let { money(it, true) } ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                }
                 state.pending.forEach { order ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -278,6 +288,10 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
         }
     }
     if (showIndicators) IndicatorSettingsDialog(indicatorController) { showIndicators = false }
+    switchTo?.let { symbol -> AlertDialog(onDismissRequest = { switchTo = null }, title = { Text("切换回放品种？") },
+        text = { Text("切换品种会结束当前回放，清除本地模拟仓位、挂单和统计记录。") },
+        confirmButton = { TextButton(onClick = { switchTo = null; changeSymbol(symbol) }) { Text("切换品种") } },
+        dismissButton = { TextButton(onClick = { switchTo = null }) { Text("取消") } }) }
     if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false }, title = { Text("结束本次回放？") },
         text = { Text("本次模拟仓位和交易记录将清除。") }, confirmButton = {
             TextButton(onClick = { confirmReset = false; playing = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig); started = false }) { Text("重选起点") }
