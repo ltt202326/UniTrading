@@ -63,4 +63,25 @@ class HistoricalReplayTest {
         assertTrue(result.positions.isEmpty())
         assertNotNull(result.lastNotice)
     }
+
+    @Test fun oppositeOrdersReduceThenReverseTheNetPosition() {
+        val long = ReplayState(0).open(spec, start, Side.BUY, 200, null, null)
+        val reduced = long.open(spec, start.copy(close = 10_050), Side.SELL, 100, null, null)
+        assertEquals(100L, reduced.positions.single().lotsHundredths)
+        assertEquals(Side.BUY, reduced.positions.single().side)
+        assertEquals(1_500_000L, reduced.trades.single().pnlMicros)
+        val reversed = reduced.open(spec, start.copy(close = 10_050), Side.SELL, 200, null, null)
+        assertEquals(Side.SELL, reversed.positions.single().side)
+        assertEquals(100L, reversed.positions.single().lotsHundredths)
+        assertEquals(2, reversed.trades.size)
+    }
+
+    @Test fun pendingEditsValidateWithoutChangingPositionOrOrderIdentity() {
+        val queued = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_950, 9_900, null, 10_000)
+        val revised = queued.modifyPending(spec, queued.pending.single().id, 9_925, 9_875, null, 10_000)
+        assertEquals(queued.pending.single().id, revised.pending.single().id)
+        assertEquals(9_925L, revised.pending.single().price)
+        assertTrue(revised.positions.isEmpty())
+        assertFailsWith<IllegalArgumentException> { revised.modifyPending(spec, revised.pending.single().id, 10_025, null, null, 10_000) }
+    }
 }

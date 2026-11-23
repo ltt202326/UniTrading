@@ -26,16 +26,40 @@ internal data class ReplayState(
         open(spec, Candle(0, price, price, price, price), side, quantity, stop, target)
         return copy(pending = pending + ReplayPending(nextId, side, kind, quantity, price, stop, target), nextId = nextId + 1)
     }
+    fun modifyPending(spec: Instrument, id: Long, price: Long, stop: Long?, target: Long?, current: Long): ReplayState {
+        val existing = pending.firstOrNull { it.id == id } ?: error("模拟挂单不存在")
+        enqueue(spec, existing.side, existing.kind, existing.quantity, price, stop, target, current)
+        return copy(pending = pending.map { if (it.id == id) it.copy(price = price, stop = stop, target = target) else it })
+    }
     fun open(spec: Instrument, candle: Candle, side: Side, quantity: Long, stop: Long?, target: Long?): ReplayState {
         require(spec.lotStepHundredths > 0 && quantity > 0 && quantity >= spec.minLotsHundredths && quantity <= spec.maxLotsHundredths && quantity % spec.lotStepHundredths == 0L) { "数量不符合合约手数限制" }
         val entry = candle.close
         require(entry > 0 && spec.tickSize > 0 && entry % spec.tickSize == 0L) { "当前 K 线价格无效" }
         require(stop == null || stop > 0 && stop % spec.tickSize == 0L && (if (side == Side.BUY) stop < entry else stop > entry)) { "止损价格无效或方向不正确" }
         require(target == null || target > 0 && target % spec.tickSize == 0L && (if (side == Side.BUY) target > entry else target < entry)) { "止盈价格无效或方向不正确" }
-        val fee = commission(spec, quantity)
-        val position = Position("replay-$nextId", spec.executionSymbol ?: spec.symbol, side, quantity, entry, candle.timeMs,
+        var remaining = quantity
+        var state = this
+        // Futures accounts are netted: opposite orders reduce existing lots in opening order before reversing.
+        for (position in positions.filter { it.side != side }) {
+            if (remaining == 0L) break
+            val closedLots = minOf(remaining, position.lotsHundredths)
+            val entryFee = if (closedLots == position.lotsHundredths) position.entryFeeMicros
+                else com.unitrading.broker.multiplyDivide(position.entryFeeMicros, closedLots, 1, position.lotsHundredths)
+            val part = position.copy(lotsHundredths = closedLots, entryFeeMicros = entryFee)
+            val gross = grossPnl(spec, part.side, closedLots, part.entryPrice, entry)
+            val net = checkedAdd(gross, -checkedAdd(entryFee, commission(spec, closedLots)))
+            val rest = position.lotsHundredths - closedLots
+            state = state.copy(positions = state.positions.mapNotNull {
+                if (it.id != position.id) it else if (rest == 0L) null
+                else it.copy(lotsHundredths = rest, entryFeeMicros = it.entryFeeMicros - entryFee)
+            }, trades = state.trades + ReplayTrade(part, entry, candle.timeMs, net, "反向减仓"))
+            remaining -= closedLots
+        }
+        if (remaining == 0L) return state
+        val fee = commission(spec, remaining)
+        val position = Position("replay-${state.nextId}", spec.executionSymbol ?: spec.symbol, side, remaining, entry, candle.timeMs,
             stopLoss = stop, takeProfit = target, marginMicros = 0, entryFeeMicros = fee)
-        return copy(positions = positions + position, nextId = nextId + 1)
+        return state.copy(positions = state.positions + position, nextId = state.nextId + 1)
     }
 
     fun protect(spec: Instrument, position: Position, current: Long, stop: Long?, target: Long?): ReplayState {

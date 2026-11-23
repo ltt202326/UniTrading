@@ -151,11 +151,20 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
         }.onSuccess { message = null; accept(it); started = true }
             .onFailure { message = it.message ?: "无法模拟下单" }
     }
+    fun pendingId(id: String): Long = id.removePrefix("replay-order-").toLongOrNull() ?: error("模拟挂单不存在")
+    fun pendingPreview(id: String, price: Long, sl: Long?, tp: Long?): OrderPreview = runCatching {
+        state.modifyPending(spec, pendingId(id), price, sl, tp, current.close)
+        OrderPreview(price)
+    }.getOrElse { OrderPreview(null, errors = listOf(it.message ?: "模拟挂单修改无效")) }
     val localChartActions = ChartOrderActions(
         estimateDraft = { it to OrderPreview(null, errors = listOf("回放请使用模拟订单面板")) },
-        onDraftEntry = {}, onDraftProtection = { _, _ -> }, editPending = false,
-        estimatePending = { _, _ -> OrderPreview(null) }, onPendingEntry = { _, _ -> }, editPendingProtection = false,
-        estimatePendingProtection = { _, _, _ -> OrderPreview(null) }, onPendingProtection = { _, _, _ -> },
+        onDraftEntry = {}, onDraftProtection = { _, _ -> }, editPending = true,
+        estimatePending = { id, price -> state.pending.firstOrNull { "replay-order-${it.id}" == id }?.let { pendingPreview(id, price, it.stop, it.target) } ?: OrderPreview(null) },
+        onPendingEntry = { order, price -> runCatching { state.modifyPending(spec, pendingId(order.id), price, order.request.stopLoss, order.request.takeProfit, current.close) }
+            .onSuccess { state = it; message = null }.onFailure { message = it.message } }, editPendingProtection = true,
+        estimatePendingProtection = { id, sl, tp -> state.pending.firstOrNull { "replay-order-${it.id}" == id }?.let { pendingPreview(id, it.price, sl, tp) } ?: OrderPreview(null) },
+        onPendingProtection = { order, sl, tp -> runCatching { state.modifyPending(spec, pendingId(order.id), order.request.entryPrice ?: error("挂单价格无效"), sl, tp, current.close) }
+            .onSuccess { state = it; message = null }.onFailure { message = it.message } },
         onProtection = { position, sl, tp -> runCatching { state.protect(spec, position, current.close, sl, tp) }
             .onSuccess { state = it; message = null }.onFailure { message = it.message } },
         onLineAction = { action -> runCatching {
@@ -164,13 +173,15 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                 is LineAction.CancelOrder -> state = state.copy(pending = state.pending.filterNot { "replay-order-${it.id}" == action.order.id })
                 is LineAction.RemoveProtection -> state = state.protect(spec, action.position, current.close,
                     if (action.stop) null else action.position.stopLoss, if (action.stop) action.position.takeProfit else null)
+                is LineAction.RemovePendingProtection -> state = state.modifyPending(spec, pendingId(action.order.id), action.order.request.entryPrice ?: error("挂单价格无效"),
+                    if (action.stop) null else action.order.request.stopLoss, if (action.stop) action.order.request.takeProfit else null, current.close)
                 else -> Unit
             }
         }.onFailure { message = it.message } }, addPositionProtection = true, removeProtection = true,
     )
     val chartOrders = remember(state.pending, spec) { state.pending.map { order ->
         PendingOrder("replay-order-${order.id}", OrderRequest(spec.executionSymbol ?: spec.symbol, order.side, order.kind,
-            order.quantity, order.price, order.stop, order.target), createdAtMs = current.timeMs, editable = false, protectionEditable = false)
+            order.quantity, order.price, order.stop, order.target), createdAtMs = current.timeMs, editable = true, protectionEditable = true)
     } }
     val visible = remember(bars, state.index, sourceFrame, chartFrame) {
         runCatching { replayChartBars(bars, state.index, sourceFrame, chartFrame, spec.symbol, input.regular) }.getOrElse { emptyList() }
@@ -298,7 +309,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                         .onSuccess { message = null; accept(it) }.onFailure { message = it.message } }) { Text("模拟平仓") }
                 }
                 state.trades.asReversed().take(30).forEach { t -> Text("${t.reason} ${money(t.pnlMicros, true)} · ${spec.formatPrice(t.exit)}", style = MaterialTheme.typography.bodySmall) }
-                Text("仅使用 K 线 OHLC；同根同时触及止损止盈按止损。挂单成交后的保护单从下一根 K 线生效。无点差和滑点；手续费采用合约默认值。回撤仅在 K 线收盘时检查，EOD 以芝加哥 17:00 已实现余额更新；规则与券商实际规定可能不同。", style = MaterialTheme.typography.bodySmall)
+                Text("净持仓按先开先平抵消反向订单。仅使用 K 线 OHLC；同根同时触及止损止盈按止损。挂单成交后的保护单从下一根 K 线生效。无点差和滑点；手续费采用合约默认值。回撤仅在 K 线收盘时检查，EOD 以芝加哥 17:00 已实现余额更新；规则与券商实际规定可能不同。", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
