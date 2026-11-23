@@ -1385,7 +1385,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }, singleRow = singleLine)
                     if (replaySetup) ReplaySetupDialog(plugin, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
                         market.simulatedTimeMs, onDismiss = { replaySetup = false }, onReady = { ready ->
-                            replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = null
+                            replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
                             replaySeries.clear(); replaySeries.putAll(ready.data); replayLoading.clear(); replayRevision++
                             val chosen = ready.instruments.firstOrNull { it.symbol == selectedInstrument.symbol } ?: ready.instruments.first()
                             replayInput = ReplayInput(chosen, selectedFrame, chartPreferences.sessionForChart(target) == ChartSession.REGULAR,

@@ -928,7 +928,7 @@ class RithmicBroker(
 
     override suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
         require(startMs >= 0 && startMs < endMs) { "历史数据日期范围无效" }
-        require(timeframe.isDaily || endMs / 1_000 <= Int.MAX_VALUE) { "所选日期超出券商历史接口范围" }
+        require(timeframe.isDaily || endMs <= Int.MAX_VALUE.toLong() * 1_000 - timeframe.millis) { "所选日期超出券商历史接口范围" }
         check(marketReady && !stopped) { "券商行情尚未连接" }
         val plant = checkNotNull(historyPlant) { "券商历史行情尚未连接" }
         if (symbol.startsWith("@") && lock.withLock { continuousRoutes[symbol]?.tradeSymbol == null }) refreshContinuous(symbol)
@@ -941,14 +941,15 @@ class RithmicBroker(
         val bars = mutableListOf<Candle>()
         var from = startMs
         // A bounded wall-clock window stays below the server's reply cap even in a continuously trading market.
-        val window = timeframe.millis.coerceAtMost(Long.MAX_VALUE / 900) * 900
+        val window = timeframe.millis.coerceAtMost(Long.MAX_VALUE / 899) * 899
         while (from < endMs) {
             val until = if (endMs - from <= window) endMs else from + window
             val reply = plant.request(Rt.REQUEST_TIME_BAR_REPLAY, 60_000) {
                 string(Rf.SYMBOL, source); string(Rf.EXCHANGE, exchange)
                 int32(Rf.BAR_TYPE, barType(timeframe)); int32(Rf.BAR_PERIOD, barPeriod(timeframe))
                 if (timeframe.isDaily) { int32(Rf.START_INDEX, yyyymmdd(from)); int32(Rf.FINISH_INDEX, yyyymmdd(until - 1)) }
-                else { int32(Rf.START_INDEX, (from / 1_000).toInt()); int32(Rf.FINISH_INDEX, ((until - 1) / 1_000).toInt()) }
+                // Intraday markers are bar close times. Overlap by a bar so no boundary candle is omitted.
+                else { int32(Rf.START_INDEX, (from / 1_000).toInt()); int32(Rf.FINISH_INDEX, ((until + timeframe.millis) / 1_000).toInt()) }
                 int32(Rf.TIME_ORDER, RithmicEnums.TIME_ORDER_FORWARDS)
             }
             bars.addAll(reply.mapNotNull { candleFrom(it, spec, timeframe) }.filter { it.timeMs in startMs until endMs })

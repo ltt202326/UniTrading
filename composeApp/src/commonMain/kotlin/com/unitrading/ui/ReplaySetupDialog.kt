@@ -122,6 +122,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, instruments: List<Instrumen
                                         val (from, until) = range.forFrame(frame)
                                         val result = broker.historicalRange(instrument.symbol, frame, from, until)
                                         if (frame == Timeframe.M1 && result.candles.size < 2) throw IllegalStateException("${instrument.symbol} 在所选范围内没有足够的 1 分钟数据")
+                                        if (frame == Timeframe.D1 && result.candles.isEmpty()) warnings += "${instrument.symbol}：券商没有返回该日期范围的日线"
                                         data[instrument.symbol to frame] = result.candles.sortedBy { it.timeMs }
                                         result.warning?.let { warnings += "${instrument.symbol}：$it" }
                                     }

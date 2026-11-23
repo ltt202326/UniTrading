@@ -28,15 +28,17 @@ class RithmicBrokerTest {
     @Test fun replayHistoryRequestsTheEntireRangeInBoundedWindows() = runTest {
         val server = FakeRithmicServer()
         val broker = ready(server)
+        server.bars = 2_000; server.filterHistoryRange = true
         val before = server.requests(Rt.REQUEST_TIME_BAR_REPLAY).size
-        val start = FAKE_TIME - 1_801 * Timeframe.M1.millis
-        val end = FAKE_TIME
+        val end = FAKE_TIME / Timeframe.M1.millis * Timeframe.M1.millis
+        val start = end - 1_801 * Timeframe.M1.millis
         val result = broker.historicalRange("MESZ6", Timeframe.M1, start, end)
         val requests = server.requests(Rt.REQUEST_TIME_BAR_REPLAY).drop(before)
         assertEquals(3, requests.size)
         assertEquals((start / 1_000).toInt(), requests.first().int(Rf.START_INDEX))
-        assertEquals(((end - 1) / 1_000).toInt(), requests.last().int(Rf.FINISH_INDEX))
-        assertTrue(requests.zipWithNext().all { (a, b) -> a.int(Rf.FINISH_INDEX)!! + 1 == b.int(Rf.START_INDEX) })
+        assertEquals(((end + Timeframe.M1.millis) / 1_000).toInt(), requests.last().int(Rf.FINISH_INDEX))
+        assertTrue(requests.zipWithNext().all { (a, b) -> a.int(Rf.FINISH_INDEX)!! >= b.int(Rf.START_INDEX)!! })
+        assertEquals(1_801, result.candles.size)
         assertTrue(result.candles.all { it.timeMs in start until end })
     }
 

@@ -82,7 +82,7 @@ class HistoricalReplayUiTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-begin").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("replay-begin").performClick()
         awaitReplay()
-        compose.onNodeWithTag("chart-symbol").performClick()
+        compose.onNode(hasTestTag("chart-symbol") and hasAnyAncestor(hasTestTag("historical-replay"))).performClick()
         compose.onNodeWithTag("symbol-option-TESTZ6").assertExists()
         compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("历史回放 · 本地模拟").fetchSemanticsNodes().isNotEmpty() }

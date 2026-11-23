@@ -971,8 +971,8 @@ class TradovateBroker(
                 check(!load.failed) { "券商历史数据读取失败，请重试" }
                 if (load.complete) null else checkNotNull(load.nextPageBefore) { "券商历史分页未完成" }
             } ?: break
-            check(next < before) { "券商历史分页未向前推进" }
-            before = next
+            check(next <= before && next > startMs) { "券商历史分页未向前推进" }
+            before = next - 1
         }
         val bars = lock.withLock { load.candles.filter { it.timeMs in startMs until endMs } }
         val warning = if (symbol == "@MCL") "MCL 历史取当前确认的主力合约，未自动拼接旧合约" else null
