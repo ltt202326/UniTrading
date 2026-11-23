@@ -339,7 +339,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             quote = price?.let { Quote(it, it, current.timeMs) }, candles = visible, timeframe = frame,
                             onTimeframe = { frames[id] = it }, positions = state.positions, trades = emptyList(), selectedPositionId = null,
                             focusedTrade = null, draft = null, preview = null, orders = chartOrders, actions = localChartActions,
-                            onSide = { requestOrder(it, OrderKind.MARKET, null) }, modifier = Modifier.fillMaxSize(), indicators = indicatorSettings.indicators,
+                            onSide = { side -> if (id != activeChart) activeChart = id else requestOrder(side, OrderKind.MARKET, null) },
+                            modifier = Modifier.fillMaxSize(), indicators = indicatorSettings.indicators,
                             chrome = ChartChrome(drawings = drawings, showDrawingFavorites = id == activeChart,
                                 priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true,
                                 desktopAxisStyle = true, showNavigation = false, showWatermark = true, chartTimeZone = input.zone))
