@@ -1387,6 +1387,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     replayInput?.let { input -> HistoricalReplayDialog(input, market.revision,
                         history = { sym, frame -> plugin.history(sym, frame) },
                         watch = { sym, frame -> replayWatch = replayWatch.filter { it.first == sym }.toSet() + (sym to frame) },
+                        drawingDefaults = runtime.drawingLibrary,
                         onDismiss = { replayWatch = emptySet(); replayInput = null }) }
                 }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {

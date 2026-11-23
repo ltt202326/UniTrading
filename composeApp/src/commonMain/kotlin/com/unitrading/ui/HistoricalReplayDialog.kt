@@ -26,6 +26,7 @@ import com.unitrading.broker.*
 import com.unitrading.chart.*
 import com.unitrading.chart.drawing.ChartDrawings
 import com.unitrading.chart.drawing.DrawingToolbar
+import com.unitrading.chart.drawing.DrawingLibrary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -45,7 +46,8 @@ private data class ReplayOrderIntent(val side: Side, val kind: OrderKind, val pr
 @Composable
 internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
     history: (String, Timeframe) -> List<Candle> = { _, _ -> emptyList() },
-    watch: (String, Timeframe) -> Unit = { _, _ -> }, onDismiss: () -> Unit) {
+    watch: (String, Timeframe) -> Unit = { _, _ -> }, drawingDefaults: DrawingLibrary? = null,
+    onDismiss: () -> Unit) {
     var selected by remember(input) { mutableStateOf(input.instrument) }
     var fineSnapshot by remember(input) { mutableStateOf<List<Candle>?>(null) }
     val fineHistory = remember(revision, selected.symbol) { history(selected.symbol, Timeframe.M1) }
@@ -82,7 +84,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
                 ReplayWorkspace(input.copy(instrument = selected), bars, rawFrame, fineHistory,
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
                         selected = it; fineSnapshot = null; watch(symbol, Timeframe.M1)
-                    } }, history = history, watch = watch, revision = revision, onDismiss = onDismiss)
+                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, onDismiss = onDismiss)
             }
         }
     }
@@ -92,7 +94,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
 private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initialFrame: Timeframe,
     fineHistory: List<Candle>, changeSymbol: (String) -> Unit,
     history: (String, Timeframe) -> List<Candle>, watch: (String, Timeframe) -> Unit,
-    revision: Long, onDismiss: () -> Unit) {
+    revision: Long, drawingDefaults: DrawingLibrary?, onDismiss: () -> Unit) {
     val spec = input.instrument
     var bars by remember { mutableStateOf(initialBars) }
     var sourceFrame by remember { mutableStateOf(initialFrame) }
@@ -138,7 +140,10 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     val indicatorSettings by indicatorController.settings.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(indicatorController) { indicatorController.apply(IndicatorSettings(input.indicators)) }
-    val drawings = remember { ChartDrawings(MemorySnapshotStore()).also { it.bind(spec.symbol) } }
+    val drawings = remember(drawingDefaults) {
+        val local = DrawingLibrary(MemorySnapshotStore())
+        ChartDrawings(local, drawingDefaults ?: local).also { it.bind(spec.symbol) }
+    }
     val current = bars[state.index]
     fun useFineHistory(data: List<Candle>): Boolean {
         val sorted = data.sortedBy(Candle::timeMs)
