@@ -85,7 +85,9 @@ class HistoricalReplayUiTest {
         compose.onNode(hasTestTag("chart-symbol") and hasAnyAncestor(hasTestTag("historical-replay"))).performClick()
         compose.onNodeWithTag("symbol-option-TESTZ6").assertExists()
         compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("历史回放 · 本地模拟").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-chart-main").fetchSemanticsNodes().any {
+            it.config.getOrNull(SemanticsProperties.ContentDescription)?.any { value -> value.contains("OTHRZ6") } == true
+        } }
         assertTrue(broker.placed.isEmpty())
     }
 
