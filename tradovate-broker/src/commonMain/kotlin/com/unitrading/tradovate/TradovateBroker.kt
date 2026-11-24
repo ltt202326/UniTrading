@@ -1003,7 +1003,8 @@ class TradovateBroker(
         (previous - next.toSet()).forEach(::stopWatch)
         // The chart the user works on is asked for again on every call, as before; the others only when they are new.
         next.forEachIndexed { index, one ->
-            if (index == 0 || one !in previous || one in changedDepth) startWatch(one, forceRefresh = one in changedDepth || index == 0 && previous.isNotEmpty() && previous.first() != one)
+            if (index == 0 || one !in previous || one in changedDepth) startWatch(one,
+                forceRefresh = one in changedDepth || index == 0 && previous.isNotEmpty() && previous.first() != one && one !in previous)
         }
     }
 

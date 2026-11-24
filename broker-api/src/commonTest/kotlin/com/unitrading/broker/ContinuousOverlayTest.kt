@@ -15,4 +15,8 @@ class ContinuousOverlayTest {
             overlayContinuousCandles(listOf(bar(1, 100), bar(2, 101), bar(3, 102)), listOf(bar(3, 202))))
         assertEquals(listOf(bar(1, 100)), overlayContinuousCandles(listOf(bar(1, 100)), emptyList()))
     }
+    @Test fun unsortedDuplicatesUseTheLastDatedValue() {
+        assertEquals(listOf(bar(1, 100), bar(2, 202)), overlayContinuousCandles(
+            listOf(bar(2, 101), bar(1, 100)), listOf(bar(2, 201), bar(2, 202))))
+    }
 }
