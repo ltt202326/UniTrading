@@ -1,6 +1,9 @@
 package com.unitrading.tradovate
 
 import com.unitrading.broker.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.*
 import kotlinx.serialization.json.*
 import kotlin.io.encoding.Base64
@@ -205,7 +208,8 @@ class ContinuousContractsTest {
 
     private fun TestScope.broker(wire: Wire, cache: CandleCacheStore? = null): TradovateBroker {
         val token = "eyJhbGciOiJub25lIn0." + Base64.UrlSafe.encode("{\"sub\":42,\"exp\":4102444800}".encodeToByteArray()).trimEnd('=') + ".test-signature-only"
-        return TradovateBroker(TradovateSession(TradovateEnvironment.DEMO, token, token, 42, "test", 4_102_444_800_000), wire, backgroundScope,
+        val scope = CoroutineScope(backgroundScope.coroutineContext + SupervisorJob(backgroundScope.coroutineContext[Job]))
+        return TradovateBroker(TradovateSession(TradovateEnvironment.DEMO, token, token, 42, "test", 4_102_444_800_000), wire, scope,
             now = { wire.clock }, candleCacheStore = cache)
     }
     private suspend fun TestScope.ready(wire: Wire, cache: CandleCacheStore? = null): TradovateBroker {
