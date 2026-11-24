@@ -90,7 +90,6 @@ class TradovateBroker(
     private val chartCancelLock = Mutex()
     private val continuousEvidenceSaveLock = Mutex()
     private var continuousJob: Job? = null
-    private var mclChartResolutionJob: Job? = null
     private val volumeCharts = mutableMapOf<String, DailyVolumeHistory>()
     private val continuousEvidence = ContinuousEvidence(candleCacheStore, "continuous-v1-${credentials.environment.wire}-${credentials.userId}")
     private val discardedCharts = mutableSetOf<String>()
@@ -99,8 +98,6 @@ class TradovateBroker(
     private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long, val quoteTime: Long, val lastTrade: Long?, val settlement: Long?)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
-    /** Source of each @MCL view; never show a former leader's cache under a newly confirmed contract. */
-    private var mclChartSources = emptyMap<Pair<String, Timeframe>, String>()
     // v2: older entries stopped at the first page, about a month of intraday bars, and a cached series only ever grows at its end.
     private val candleCache = CandleCache(candleCacheStore, "v2-${credentials.environment.wire}-${credentials.userId}")
     private val cachedHistory = mutableMapOf<Pair<String, Timeframe>, List<Candle>>()
@@ -452,7 +449,6 @@ class TradovateBroker(
                     pendingQuotes.forEach { it.cancel() }
                     pendingQuotes.joinAll()
                     continuousJob?.cancelAndJoin()
-                    mclChartResolutionJob?.cancelAndJoin()
                     (watchJobs.values + chartBackfillJobs.values).toList().forEach { it.cancelAndJoin() }
                     lock.withLock { preloadJob }?.cancelAndJoin()
                     cancelledChartIds.clear()
@@ -473,7 +469,7 @@ class TradovateBroker(
         connected = false; marketReady = false; problem = "已断开"
         mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情已断开，深度已清空")
         publish()
-        latencyJob?.cancel(); maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); mclChartResolutionJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
+        latencyJob?.cancel(); maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch {
             val pendingQuotes = lock.withLock { quoteWatchJobs.values.toList().also { quoteWatchJobs.clear() } }
             pendingQuotes.forEach { it.cancel() }
@@ -657,13 +653,8 @@ class TradovateBroker(
             }
             rebuild()
         }
-        // An @MCL pane must be restarted if verification selected a different source, including background panes.
-        val confirmedChartSource = target?.symbol
-        if (symbol == "@MCL" && confirmedChartSource != null) {
-            watched.filter { it.first == symbol }.forEach { series ->
-                if (mclChartSources[series] != confirmedChartSource) startWatch(series, forceRefresh = true)
-            }
-        }
+        if (symbol == "@MGC" && requestedWatch.any { it.first == symbol })
+            watchAllWithExtendedHistory(requestedWatch, requestedExtended)
         // Concurrent symbols must not persist an older snapshot over a newer result.
         continuousEvidenceSaveLock.withLock { continuousEvidence.save(lock.withLock { continuousEvidence.snapshot() }) }
     }
@@ -944,53 +935,65 @@ class TradovateBroker(
         if (metadataJob?.isActive != true) metadataJob = scope.launch { hydrateContracts() }
     }
 
-    /** @MCL uses the verified dated leader's actual bars; the vendor alias may be an adjusted/different series. */
-    private fun verifiedMclSource(): String? {
-        val route = continuousRoutes["@MCL"] ?: return null
-        val checked = route.checkedAt ?: return null
-        return route.spec.tradeSymbol?.takeIf { now() >= checked && now() < route.validUntil }
-    }
-
-    private fun chartCacheKey(series: Pair<String, Timeframe>, source: String): Pair<String, Timeframe> =
-        (if (series.first == "@MCL") "@MCL|$source" else source) to series.second
+    private fun chartCacheKey(series: Pair<String, Timeframe>, source: String): Pair<String, Timeframe> = source to series.second
 
     override fun history(symbol: String, timeframe: Timeframe): List<Candle> {
         val series = symbol to timeframe
-        if (symbol == "@MCL" && (verifiedMclSource() == null || mclChartSources[series] != verifiedMclSource())) return emptyList()
-        return history[series] ?: emptyList()
+        val vendor = history[series].orEmpty()
+        if (symbol != "@MGC") return vendor
+        val leader = continuousRoutes[symbol]?.let { route ->
+            route.spec.tradeSymbol?.takeIf { route.checkedAt != null && now() >= route.checkedAt && now() < route.validUntil }
+        } ?: return vendor
+        val dated = history[leader to timeframe].orEmpty()
+        val joined = overlayContinuousCandles(vendor, dated)
+        return if (series in extendedHistory) joined else joined.takeLast(CHART_BARS)
     }
     override suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
         require(startMs >= 0 && startMs < endMs) { "历史数据日期范围无效" }
         check(marketReady && !stopped) { "券商行情尚未连接" }
-        if (symbol == "@MCL" && verifiedMclSource() == null) refreshContinuous(symbol)
-        val source = if (symbol == "@MCL") verifiedMclSource() ?: error("MCL 当前合约尚未确认，请稍后重试") else symbol
-        val load = ChartLoad(emptyList(), startMs, extended = true, maxFreshPages = Int.MAX_VALUE)
-        var before = endMs - 1
-        while (true) {
-            lock.withLock { load.beginPage() }
-            preloadPage(source to timeframe, load, chartBackfillRange(startMs, before), historyOnly = true)
-            val next = lock.withLock {
-                check(!load.failed) { "券商历史数据读取失败，请重试" }
-                if (load.complete) null else checkNotNull(load.nextPageBefore) { "券商历史分页未完成" }
-            } ?: break
-            check(next <= before && next > startMs) { "券商历史分页未向前推进" }
-            before = next - 1
+        suspend fun loadSource(source: String): List<Candle> {
+            val load = ChartLoad(emptyList(), startMs, extended = true, maxFreshPages = Int.MAX_VALUE)
+            var before = endMs - 1
+            while (true) {
+                lock.withLock { load.beginPage() }
+                preloadPage(source to timeframe, load, chartBackfillRange(startMs, before), historyOnly = true)
+                val next = lock.withLock {
+                    check(!load.failed) { "券商历史数据读取失败，请重试" }
+                    if (load.complete) null else checkNotNull(load.nextPageBefore) { "券商历史分页未完成" }
+                } ?: break
+                check(next <= before && next > startMs) { "券商历史分页未向前推进" }
+                before = next - 1
+            }
+            return lock.withLock { load.candles.filter { it.timeMs in startMs until endMs } }
         }
-        val bars = lock.withLock { load.candles.filter { it.timeMs in startMs until endMs } }
-        val warning = if (symbol == "@MCL") "MCL 历史取当前确认的主力合约，未自动拼接旧合约" else null
-        return HistoricalRangeResult(bars, warning, cacheable = true)
+        if (symbol != "@MGC") return HistoricalRangeResult(loadSource(symbol),
+            if (symbol == "@MCL") "MCL 使用券商连续历史，换月及复权规则未确认" else null, cacheable = true)
+        if (continuousRoutes[symbol]?.spec?.tradeSymbol == null) refreshContinuous(symbol)
+        val leader = continuousRoutes[symbol]?.spec?.tradeSymbol ?: error("MGC 主力合约未确认，请稍后重试")
+        val vendor = loadSource(symbol)
+        val dated = loadSource(leader)
+        check(continuousRoutes[symbol]?.spec?.tradeSymbol == leader) { "MGC 主力合约已变化，请重新读取历史" }
+        val note = "MGC 重叠时优先 $leader；其余为券商连续历史，换月及复权规则未确认"
+        return HistoricalRangeResult(overlayContinuousCandles(vendor, dated), note, cacheable = vendor.isNotEmpty())
     }
     override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))
 
     private var extendedHistory = emptySet<Pair<String, Timeframe>>()
+    private var requestedWatch = emptyList<Pair<String, Timeframe>>()
+    private var requestedExtended = emptySet<Pair<String, Timeframe>>()
     override fun watchAll(series: List<Pair<String, Timeframe>>) = watchAllWithExtendedHistory(series, emptySet())
 
     override fun watchAllWithExtendedHistory(series: List<Pair<String, Timeframe>>, extended: Set<Pair<String, Timeframe>>) {
         if (stopped) return
-        val next = series.distinct()
+        requestedWatch = series.distinct()
+        requestedExtended = extended
+        val mgc = continuousRoutes["@MGC"]?.spec?.tradeSymbol
+        val overlays = if (mgc == null) emptyList() else requestedWatch.filter { it.first == "@MGC" }.map { mgc to it.second }
+        val next = (requestedWatch + overlays).distinct()
         val previous = watched
-        val changedDepth = (extendedHistory - extended) + (extended - extendedHistory)
-        extendedHistory = extended.intersect(next.toSet())
+        val expanded = extended + (if (mgc == null) emptySet() else extended.filter { it.first == "@MGC" }.map { mgc to it.second }.toSet())
+        val changedDepth = (extendedHistory - expanded) + (expanded - extendedHistory)
+        extendedHistory = expanded.intersect(next.toSet())
         if (previous.firstOrNull()?.first != next.firstOrNull()?.first) { continuousJob?.cancel(); continuousJob = null }
         watched = next
         (previous - next.toSet()).forEach(::stopWatch)
@@ -1025,28 +1028,16 @@ class TradovateBroker(
                 preloadWake.trySend(Unit)
                 val socket = marketSocket ?: return@launch
                 if (!marketReady) return@launch
-                val source = if (symbol == "@MCL") verifiedMclSource() else symbol
-                if (source == null) {
-                    // No potentially incorrect alias bars or stale leader cache while the execution route is unconfirmed.
-                    lock.withLock { mclChartSources = mclChartSources - series; history = history - series; publish() }
-                    if (mclChartResolutionJob?.isActive != true) mclChartResolutionJob = scope.launch { refreshContinuous(symbol) }
-                    return@watchLock
-                }
+                val source = symbol
                 val cacheSeries = chartCacheKey(series, source)
                 val deep = series in extendedHistory
                 val cached = if (deep) emptyList() else lock.withLock { cachedHistory[cacheSeries] } ?: candleCache.read(cacheSeries, now()).also { bars ->
                     lock.withLock { cachedHistory[cacheSeries] = bars }
                 }
                 lock.withLock {
-                    if (symbol == "@MCL") {
-                        if (verifiedMclSource() == source) {
-                            if (mclChartSources[series] != source || series !in history) history = history + (series to cached)
-                            mclChartSources = mclChartSources + (series to source)
-                        }
-                    } else if (series !in history) history = history + (series to cached)
+                    if (series !in history) history = history + (series to cached)
                     publish()
                 }
-                if (symbol == "@MCL" && verifiedMclSource() != source) return@watchLock
                 try {
                     // The leader of the chart being worked on is checked here; the other charts' symbols are checked with the watch list.
                     if (series == watching && symbol in continuousRoutes && continuousJob?.isActive != true) continuousJob = scope.launch {
@@ -1061,7 +1052,7 @@ class TradovateBroker(
                     withContext(NonCancellable) {
                         // This series' own stale charts, and those of series that no chart shows any more.
                         cancelCharts(socket, keep = watched.filter { it != series })
-                        if (series !in watched || stopped || !marketReady || (symbol == "@MCL" && verifiedMclSource() != source)) return@withContext
+                        if (series !in watched || stopped || !marketReady) return@withContext
                         val load = ChartLoad(cached, if (deep) 0L else chartHistoryFloor(timeframe, now()), extended = deep)
                         requestChart(socket, ChartPage(series, load, now(), liveOnly = cached.isNotEmpty(), historyOnly = false, sourceSymbol = source), chartTimeRange(cached))
                         if (cached.isNotEmpty() && series in watched && !stopped) {
@@ -1188,7 +1179,7 @@ class TradovateBroker(
                 withContext(NonCancellable) {
                     // A fresh chart's first page also carries the live stream.
                     if (page.historyOnly) cancelCharts(socket, page)
-                    if (!marketReady || (page.series.first == "@MCL" && verifiedMclSource() != page.sourceSymbol)) return@withContext
+                    if (!marketReady) return@withContext
                     val before = lock.withLock { page.load.nextPageBefore }
                     if (before != null && !page.load.failed && page.series in watched && !stopped) {
                         lock.withLock { page.load.beginPage() }
@@ -1210,8 +1201,7 @@ class TradovateBroker(
 
     override fun preloadHistory(series: List<Pair<String, Timeframe>>) {
         if (stopped) return
-        // The vendor @MCL alias may not match the verified execution contract; do not cache it in the background.
-        preloadTargets.value = series.distinct().filterNot { it.first == "@MCL" }
+        preloadTargets.value = series.distinct()
         startPreload()
     }
 
@@ -1534,7 +1524,6 @@ class TradovateBroker(
         }
         val page = channel.page
         if (page.historyOnly && page.ended) return
-        if (page.series.first == "@MCL" && (verifiedMclSource() != page.sourceSymbol || mclChartSources[page.series] != page.sourceSymbol)) return
         val key = page.series
         val incoming = chartBars(chart)
         val endOfHistory = !page.liveOnly && !page.ended && chart.bool("eoh") == true

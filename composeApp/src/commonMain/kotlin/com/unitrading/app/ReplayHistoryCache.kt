@@ -72,7 +72,9 @@ internal class ReplayHistoryCache(private val store: SnapshotStore, private val 
             val slot = (id.hashCode().toLong() and 0x7fffffffL).rem(CACHE_SLOTS).toInt()
             val outcome = if (!useCache) permits.withPermit { broker.historicalRange(symbol, frame, from, until) } to false
             else slotLocks[slot].withLock {
-                val key = "replay-history-v1-$slot"
+                // MGC now overlays the confirmed contract, while MCL now uses the provider alias.
+                // Never reuse historical chunks written by the old source-selection rules.
+                val key = "replay-history-${if (symbol == "@MGC" || symbol == "@MCL") "v2" else "v1"}-$slot"
                 val cached = try {
                     storageLock.withLock {
                         memory[slot] ?: if (persistent) withContext(Dispatchers.Default) { store.read(key)?.let { Json.decodeFromString<ReplayCacheEntry>(it) } } else null

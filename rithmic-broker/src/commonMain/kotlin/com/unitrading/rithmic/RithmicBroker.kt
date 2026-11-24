@@ -739,7 +739,11 @@ class RithmicBroker(
             rebuild()
         }
         if (requestedOrderFlow == symbol) syncOrderFlow()
-        if (resolved != null) { refreshQuoteWatch(); watched.filter { it.first == symbol }.forEach(::startWatch) }
+        if (symbol == "@MGC" && requestedWatch.any { it.first == symbol }) watchAll(requestedWatch)
+        if (resolved != null) {
+            refreshQuoteWatch()
+            if (symbol != "@MGC") watched.filter { it.first == symbol }.forEach(::startWatch)
+        }
     }
 
     /** The dated contract the server names for a product on one exchange, with its specification loaded. */
@@ -924,7 +928,12 @@ class RithmicBroker(
 
     // ───────────────────────────── history ─────────────────────────────
 
-    override fun history(symbol: String, timeframe: Timeframe) = history[symbol to timeframe] ?: emptyList()
+    override fun history(symbol: String, timeframe: Timeframe): List<Candle> {
+        val vendor = history[symbol to timeframe].orEmpty()
+        if (symbol != "@MGC") return vendor
+        val leader = executionSymbol(symbol) ?: return vendor
+        return overlayContinuousCandles(vendor, history[leader to timeframe].orEmpty()).takeLast(RITHMIC_CHART_BARS)
+    }
 
     override suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
         require(startMs >= 0 && startMs < endMs) { "历史数据日期范围无效" }
@@ -938,32 +947,46 @@ class RithmicBroker(
         val spec = lock.withLock { specs[execution] } ?: error("合约规格尚未加载")
         val source = route?.productCode ?: spec.instrument.symbol
         val exchange = route?.exchange ?: spec.exchange
-        val bars = mutableListOf<Candle>()
-        var from = startMs
-        // A bounded wall-clock window stays below the server's reply cap even in a continuously trading market.
-        val window = timeframe.millis.coerceAtMost(Long.MAX_VALUE / 899) * 899
-        while (from < endMs) {
-            val until = if (endMs - from <= window) endMs else from + window
-            val reply = plant.request(Rt.REQUEST_TIME_BAR_REPLAY, 60_000) {
-                string(Rf.SYMBOL, source); string(Rf.EXCHANGE, exchange)
-                int32(Rf.BAR_TYPE, barType(timeframe)); int32(Rf.BAR_PERIOD, barPeriod(timeframe))
-                if (timeframe.isDaily) { int32(Rf.START_INDEX, yyyymmdd(from)); int32(Rf.FINISH_INDEX, yyyymmdd(until - 1)) }
-                // Intraday markers are bar close times. Overlap by a bar so no boundary candle is omitted.
-                else { int32(Rf.START_INDEX, (from / 1_000).toInt()); int32(Rf.FINISH_INDEX, ((until + timeframe.millis) / 1_000).toInt()) }
-                int32(Rf.TIME_ORDER, RithmicEnums.TIME_ORDER_FORWARDS)
+        suspend fun loadSource(name: String, listing: String): List<Candle> {
+            val bars = mutableListOf<Candle>()
+            var from = startMs
+            val window = timeframe.millis.coerceAtMost(Long.MAX_VALUE / 899) * 899
+            while (from < endMs) {
+                val until = if (endMs - from <= window) endMs else from + window
+                val reply = plant.request(Rt.REQUEST_TIME_BAR_REPLAY, 60_000) {
+                    string(Rf.SYMBOL, name); string(Rf.EXCHANGE, listing)
+                    int32(Rf.BAR_TYPE, barType(timeframe)); int32(Rf.BAR_PERIOD, barPeriod(timeframe))
+                    if (timeframe.isDaily) { int32(Rf.START_INDEX, yyyymmdd(from)); int32(Rf.FINISH_INDEX, yyyymmdd(until - 1)) }
+                    else { int32(Rf.START_INDEX, (from / 1_000).toInt()); int32(Rf.FINISH_INDEX, ((until + timeframe.millis) / 1_000).toInt()) }
+                    int32(Rf.TIME_ORDER, RithmicEnums.TIME_ORDER_FORWARDS)
+                }
+                if (symbol == "@MGC") check(lock.withLock { executionSymbol(symbol) == execution }) { "MGC 主力合约已变化，请重新读取历史" }
+                bars.addAll(reply.mapNotNull { candleFrom(it, spec, timeframe) }.filter { it.timeMs in startMs until endMs })
+                from = until
             }
-            bars.addAll(reply.mapNotNull { candleFrom(it, spec, timeframe) }.filter { it.timeMs in startMs until endMs })
-            from = until
+            return bars.associateBy { it.timeMs }.values.sortedBy { it.timeMs }
         }
-        return HistoricalRangeResult(bars.associateBy { it.timeMs }.values.sortedBy { it.timeMs },
-            if (symbol.startsWith("@") && route == null) "券商未提供连续合约路由，历史只包含当前合约" else null, cacheable = true)
+        val bars = loadSource(source, exchange)
+        if (symbol == "@MGC") {
+            val current = loadSource(spec.instrument.symbol, spec.exchange)
+            return HistoricalRangeResult(overlayContinuousCandles(bars, current),
+                "MGC 重叠时优先 $execution；其余为券商连续历史，换月及复权规则未确认", cacheable = bars.isNotEmpty())
+        }
+        return HistoricalRangeResult(bars, when {
+            symbol == "@MCL" -> "MCL 使用券商连续历史，换月及复权规则未确认"
+            symbol.startsWith("@") && route == null -> "券商未提供连续合约路由，历史只包含当前合约"
+            else -> null
+        }, cacheable = true)
     }
 
     override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))
 
+    private var requestedWatch = emptyList<Pair<String, Timeframe>>()
     override fun watchAll(series: List<Pair<String, Timeframe>>) {
         if (stopped) return
-        val next = series.distinct()
+        requestedWatch = series.distinct()
+        val leader = executionSymbol("@MGC")
+        val next = (requestedWatch + if (leader == null) emptyList() else requestedWatch.filter { it.first == "@MGC" }.map { leader to it.second }).distinct()
         val previous = watched
         watched = next
         (previous - next.toSet()).forEach(::stopWatch)
@@ -1004,7 +1027,8 @@ class RithmicBroker(
                 try { syncQuoteSubscriptions() } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) {}
                 val plant = historyPlant ?: return@launch
                 try {
-                    withContext(NonCancellable) { addBarSubscription(plant, series, spec) }
+                    // The hidden dated series owns MGC's live subscription; avoid subscribing twice.
+                    if (symbol != "@MGC") withContext(NonCancellable) { addBarSubscription(plant, series, spec) }
                     val bars = if (route == null) loadBars(plant, spec.instrument.symbol, spec.exchange, spec, timeframe, cached) else continuousBars(plant, series, route, spec, cached)
                     if (series !in watched) return@launch
                     lock.withLock { history = history + (series to mergeBars(history[series] ?: emptyList(), bars)); publish() }

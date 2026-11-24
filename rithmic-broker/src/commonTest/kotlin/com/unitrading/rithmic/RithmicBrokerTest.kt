@@ -791,6 +791,28 @@ class RithmicBrokerTest {
     }
 
     /** Expired months have no bars on the real server, so history across rolls exists only under the bare product code. */
+    @Test fun mgcUsesCurrentContractForOverlapsAndSharesTheDatedLiveSubscription() = runTest {
+        val server = FakeRithmicServer().apply {
+            knownSymbols["MGCZ6"] = "CME"; knownSymbols["MGCH7"] = "CME"
+            extraAliases += "MGC"; aliasBars = 5; bars = 3
+            barPrices["MGC"] = 5399.0; barPrices["MGCZ6"] = 5499.0; barPrices["MGCH7"] = 5599.0
+        }
+        val broker = broker(server)
+        broker.connect(); broker.searchInstruments("MGC"); runCurrent()
+        broker.watchAll(listOf("@MGC" to Timeframe.M5, "MGCZ6" to Timeframe.M5)); runCurrent()
+        assertEquals("MGCZ6", broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
+        assertEquals(listOf(540000L, 540000L, 550000L, 550000L, 550000L), broker.history("@MGC", Timeframe.M5).map { it.close })
+        assertEquals(1, server.requests(Rt.REQUEST_TIME_BAR_UPDATE).count { it.str(Rf.SYMBOL) == "MGCZ6" && it.int(Rf.REQUEST) == RithmicEnums.REQUEST_SUBSCRIBE })
+        val end = FAKE_TIME / Timeframe.M5.millis * Timeframe.M5.millis
+        val replay = broker.historicalRange("@MGC", Timeframe.M5, end - 6 * Timeframe.M5.millis, end)
+        assertEquals(listOf(540000L, 540000L, 550000L, 550000L, 550000L), replay.candles.map { it.close })
+        assertTrue(replay.warning.orEmpty().contains("复权"))
+        server.frontMonthSymbols["MGC"] = "MGCH7"
+        broker.refreshContinuous("@MGC"); runCurrent()
+        assertEquals("MGCH7", broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
+        assertEquals(560000L, broker.history("@MGC", Timeframe.M5).last().close)
+    }
+
     @Test fun continuousChartReplaysTheFrontMonthAliasAndStaysLiveOnItsDatedContract() = runTest {
         val server = FakeRithmicServer().apply { frontMonthAlias = true }
         val broker = chart(server, MemoryCandleStore())

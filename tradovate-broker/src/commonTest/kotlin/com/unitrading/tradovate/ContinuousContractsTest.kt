@@ -89,6 +89,20 @@ class ContinuousContractsTest {
                         range.str("asFarAsTimestamp") != null && range.str("closestTimestamp") != null
                     if (!dailyVolume) {
                         chartRequests.add(body)
+                        if (root == "MGC") {
+                            // Distinct channels and deliberately different alias/delivery-month bars.
+                            delegate.market.sent.add("md/getChart")
+                            delegate.market.bodies["md/getChart"] = text.substringAfter("\n\n")
+                            val id = ++channelId
+                            val symbol = body.str("symbol")
+                            val newer = kotlin.time.Instant.fromEpochMilliseconds(CONTINUOUS_TIME - 300_000).toString()
+                            val older = kotlin.time.Instant.fromEpochMilliseconds(CONTINUOUS_TIME - 600_000).toString()
+                            val value = when (symbol) { "@MGC" -> 2000; "MGCZ6" -> 2100; else -> 2200 }
+                            val first = if (symbol == "@MGC") """{"timestamp":"$older","open":1900,"high":1900,"low":1900,"close":1900},""" else ""
+                            delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"historicalId":$id,"realtimeId":$id}}]""")
+                            delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,"s":"db","bars":[$first{"timestamp":"$newer","open":$value,"high":$value,"low":$value,"close":$value}]},{"id":$id,"eoh":true}]}}]""")
+                            return
+                        }
                         if (chartPenalty && body.str("p-ticket") == null) {
                             delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"p-ticket":"chart-ticket","p-time":1}}]""")
                         } else {
@@ -259,38 +273,55 @@ class ContinuousContractsTest {
         wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5500.50}}}]}}]""")
         runCurrent()
         assertTrue(wire.delegate.market.sent.count { it == "md/getChart" } > before)
-        assertEquals("MCLZ6", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
-        assertTrue(wire.chartRequests.none { it.str("symbol") == "@MCL" })
+        assertEquals("@MCL", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
         assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
     }
 
-    @Test fun mclChartWaitsForAConfirmedContract() = runTest {
+    @Test fun mclContinuousHistoryStillLoadsWhenExecutionMappingFails() = runTest {
         val wire = Wire(root = "MCL").apply { failMapping = true }
         val broker = ready(wire)
         assertNull(broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
-        assertTrue(broker.history("@MCL", Timeframe.M5).isEmpty())
-        assertTrue(wire.chartRequests.none { it.str("symbol") == "@MCL" || it.str("symbol") == "MCLZ6" })
+        assertTrue(wire.historyOrRequestForMcl())
+        assertTrue(wire.chartRequests.none { it.str("symbol") == "MCLZ6" })
         wire.failMapping = false
         broker.resynchronize()
         runCurrent()
         assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
-        assertTrue(wire.chartRequests.any { it.str("symbol") == "MCLZ6" })
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
         assertTrue(broker.history("@MCL", Timeframe.M5).isNotEmpty())
     }
 
     @Test fun mclChartChangesSourceWhenVerifiedLeaderRolls() = runTest {
         val wire = Wire(root = "MCL")
         val broker = ready(wire)
-        assertTrue(wire.chartRequests.any { it.str("symbol") == "MCLZ6" })
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
         wire.leader = "MCLH7"
         wire.clock += 86_400_000
         broker.refreshContinuous("@MCL", force = true)
         runCurrent()
         assertEquals("MCLH7", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
-        assertTrue(wire.chartRequests.any { it.str("symbol") == "MCLH7" })
-        assertTrue(wire.chartRequests.none { it.str("symbol") == "@MCL" })
+        assertTrue(wire.chartRequests.none { it.str("symbol") == "MCLH7" || it.str("symbol") == "MCLZ6" })
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
+    }
+
+    private fun Wire.historyOrRequestForMcl() = chartRequests.any { it.str("symbol") == "@MCL" }
+
+    @Test fun mgcUsesCurrentContractForOverlappingBarsAndKeepsEarlierAlias() = runTest {
+        val wire = Wire(root = "MGC")
+        val broker = ready(wire)
+        assertEquals("MGCZ6", broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MGC" })
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "MGCZ6" })
+        assertEquals(listOf(1_900_000_000L, 2_100_000_000L), broker.history("@MGC", Timeframe.M5).map { it.close })
+        val replay = broker.historicalRange("@MGC", Timeframe.M5, CONTINUOUS_TIME - 900_000, CONTINUOUS_TIME)
+        assertEquals(listOf(1_900_000_000L, 2_100_000_000L), replay.candles.map { it.close })
+        assertTrue(replay.warning.orEmpty().contains("复权"))
+        wire.leader = "MGCH7"; wire.clock += 86_400_000
+        broker.refreshContinuous("@MGC", force = true); runCurrent()
+        assertEquals("MGCH7", broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
+        assertEquals(2_200_000_000L, broker.history("@MGC", Timeframe.M5).last().close)
     }
 
     @Test fun liveContinuousChartIsNotRestartedWhileItsOwnBarsArrive() = runTest {

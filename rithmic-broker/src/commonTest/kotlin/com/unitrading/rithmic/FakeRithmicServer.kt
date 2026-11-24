@@ -35,6 +35,9 @@ internal class FakeRithmicServer : RithmicWire {
     var deniedExchanges = emptySet<String>()
     /** Rithmic Paper Trading lists a bare product row as a front-month alias, and replays it across rolls. */
     var frontMonthAlias = false
+    val extraAliases = mutableSetOf<String>()
+    val frontMonthSymbols = mutableMapOf<String, String>()
+    val barPrices = mutableMapOf<String, Double>()
     var aliasBars = 5
     var tradeRoutesListed = true
     var fillHistoryListed = true
@@ -89,7 +92,7 @@ internal class FakeRithmicServer : RithmicWire {
         fun drop() { inbound.close() }
     }
 
-    private fun productOf(symbol: String) = if (symbol == "MES" || symbol == "MES2") "MES" else symbol.dropLast(2)
+    private fun productOf(symbol: String) = if (symbol in extraAliases) symbol else if (symbol == "MES" || symbol == "MES2") "MES" else symbol.dropLast(2)
 
     private fun handle(socket: FakeSocket, m: ProtoMessage) {
         requests += m
@@ -166,7 +169,7 @@ internal class FakeRithmicServer : RithmicWire {
                 }
             }
             Rt.REQUEST_SEARCH_SYMBOLS -> {
-                val alias = if (frontMonthAlias) mapOf("MES" to "CME") else emptyMap()
+                val alias = (if (frontMonthAlias) mapOf("MES" to "CME") else emptyMap()) + extraAliases.associateWith { "CME" }
                 val wanted = m.str(Rf.EXCHANGE)
                 val product = m.str(Rf.PRODUCT_CODE)
                 val rows = (foreignListings + alias + knownSymbols).filter { (symbol, exchange) -> (wanted == null || exchange == wanted) && (product == null || productOf(symbol) == product) }
@@ -178,7 +181,7 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_FRONT_MONTH -> when {
                 m.str(Rf.EXCHANGE) in deniedExchanges -> reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("13", "permission denied"))
                 frontMonthNoData -> reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("7", "no data"))
-                else -> reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, "${m.str(Rf.SYMBOL)}Z6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
+                else -> reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, m.str(Rf.SYMBOL)?.let { frontMonthSymbols[it] } ?: "${m.str(Rf.SYMBOL)}Z6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
             }
             Rt.REQUEST_PRODUCT_CODES -> parts(Rt.RESPONSE_PRODUCT_CODES, productCodes[m.str(Rf.EXCHANGE)].orEmpty().map { code -> { string(Rf.EXCHANGE, m.str(Rf.EXCHANGE) ?: ""); string(Rf.PRODUCT_CODE, code) } })
             Rt.REQUEST_PRODUCT_RMS_INFO -> parts(Rt.RESPONSE_PRODUCT_RMS_INFO, productMaxOrder.map { (code, limit) -> { string(Rf.PRODUCT_CODE, code); int32(Rf.MAX_ORDER_QUANTITY, limit); productCommission[code]?.let { double(Rf.COMMISSION_FILL_RATE, it) } } })
@@ -198,7 +201,7 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_TIME_BAR_UPDATE -> reply(Rt.RESPONSE_TIME_BAR_UPDATE)
             Rt.REQUEST_TIME_BAR_REPLAY -> {
                 val symbol = m.str(Rf.SYMBOL) ?: ""
-                val alias = frontMonthAlias && symbol == "MES"
+                val alias = (frontMonthAlias && symbol == "MES") || symbol in extraAliases
                 // The answer the real server gives for an expired month, and on a system without an alias.
                 if (!alias && symbol !in knownSymbols) { reply(Rt.RESPONSE_TIME_BAR_REPLAY, codes = listOf("7", "reference data not available")); return }
                 // Second bars count their period in seconds, minute bars in minutes.
@@ -212,7 +215,8 @@ internal class FakeRithmicServer : RithmicWire {
                 parts(Rt.RESPONSE_TIME_BAR_REPLAY, wanted.map { back -> {
                     string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); int32(Rf.BAR_TYPE, if (seconds) RithmicEnums.BAR_SECOND else RithmicEnums.BAR_MINUTE); string(Rf.BAR_PERIOD, (if (seconds) period else period / 60).toString())
                     int32(Rf.BAR_MARKER, (lastClose - (back - 1) * period).toInt()); int64(Rf.BAR_VOLUME, 100L * back)
-                    double(Rf.OPEN_PRICE, 5499.0); double(Rf.HIGH_PRICE, 5501.0); double(Rf.LOW_PRICE, 5498.5); double(Rf.CLOSE_PRICE, 5500.0)
+                    val base = barPrices[symbol] ?: 5499.0
+                    double(Rf.OPEN_PRICE, base); double(Rf.HIGH_PRICE, base + 2.0); double(Rf.LOW_PRICE, base - 0.5); double(Rf.CLOSE_PRICE, base + 1.0)
                 } })
             }
             Rt.REQUEST_NEW_ORDER, Rt.REQUEST_BRACKET_ORDER -> {
