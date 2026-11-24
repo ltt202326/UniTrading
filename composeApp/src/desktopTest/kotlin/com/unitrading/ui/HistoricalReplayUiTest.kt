@@ -67,6 +67,7 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 0 笔", substring = true)
+        assertTrue(compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription].endsWith(";history:1"))
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 1 笔", substring = true)
         compose.onNodeWithTag("replay-realized").assertTextContains("-2.50", substring = true)

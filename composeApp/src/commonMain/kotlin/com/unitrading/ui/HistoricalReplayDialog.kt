@@ -317,6 +317,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         ClosedTrade("replay-trade-$index", p.id, p.symbol, p.side, p.lotsHundredths, p.entryPrice, trade.exit,
             p.openedAtMs, trade.exitTimeMs, trade.pnlMicros, trade.reason)
     } }
+    val openExecutions = remember(state.positions) { state.positions.map { p ->
+        Execution("replay-execution-${p.id}", p.symbol, p.side, p.lotsHundredths, p.entryPrice, p.openedAtMs, p.id)
+    } }
     val realized = remember(state.trades) { runCatching { state.trades.fold(0L) { sum, trade -> checkedAdd(sum, trade.pnlMicros) } }.getOrNull() }
     val analysis = remember(state.trades) { runCatching { replayAnalysis(state.trades) }.getOrNull() }
     val markPrice = remember(bars, state.index, regular, sourceFrame, regularIndices) {
@@ -406,6 +409,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             quote = price?.let { Quote(it, it, current.timeMs) }, candles = visible, timeframe = frame,
                             onTimeframe = { frames[id] = it }, positions = state.positions, trades = historyTrades, selectedPositionId = null,
                             focusedTrade = null, draft = null, preview = null, orders = chartOrders, actions = localChartActions,
+                            executions = openExecutions,
                             onSide = { side -> if (id != activeChart) activeChart = id else requestOrder(side, OrderKind.MARKET, null) },
                             modifier = Modifier.fillMaxSize(), indicators = indicatorSettings.indicators,
                             chrome = ChartChrome(drawings = drawings, showDrawingFavorites = false,
