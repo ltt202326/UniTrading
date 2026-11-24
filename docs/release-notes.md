@@ -2,7 +2,7 @@
 
 ## 简体中文
 
-- Tradovate 非股指连续合约的 K 线和买卖报价使用券商连续行情；下单月份由券商报价标识核对，无法确认或与实际月份报价不一致时暂停下单。
+- 非股指连续合约保留券商连续图表，使用连续价格与同品种月份多次实时成交匹配买卖报价；匹配不唯一、行情不可用或证据过期时暂停连续合约下单。价格匹配是推断，需在券商模拟账户核验。
 
 - 修复回放 K 线倒计时和成交后残留的订单草稿；支持收起回放侧栏、在图表上提交和修改订单数量，并移除模拟持仓卡片。
 
@@ -24,7 +24,7 @@
 
 ## English
 
-- Use Tradovate continuous candles and quotes for non-equity-index futures. Verify the executable month from the broker's quote identity; pause orders when it cannot be confirmed or the dated quote diverges.
+- Preserve broker continuous charts for non-index futures and match real-time trades across dated contracts to select Bid/Ask. Ambiguous, unavailable or stale evidence blocks continuous-symbol orders. Matching is heuristic and needs broker demo validation.
 
 - Fix the replay candle countdown and stale order drafts after fills; make the replay sidebar collapsible, enable chart order submission and quantity editing, and remove the simulated-position card.
 

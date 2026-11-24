@@ -84,6 +84,11 @@ class TradovateBroker(
     private data class ContinuousRoute(val productId: Long, val spec: Instrument, val checkedAt: Long? = null, val validUntil: Long = 0)
     private var continuousRoutes = emptyMap<String, ContinuousRoute>()
     private val continuousLocks = mutableMapOf<String, Mutex>()
+    private val priceMatchCandidates = mutableMapOf<String, Set<String>>()
+    private val priceMatchers = mutableMapOf<String, ContinuousPriceMatcher>()
+    private val priceMatchReady = mutableSetOf<String>()
+    private val priceMatchExpiry = mutableMapOf<String, Long>()
+    private val realTimeQuoteSymbols = mutableSetOf<String>()
     private val continuousResolutionSlots = Semaphore(2)
     private val volumeSlots = Semaphore(3)
     // History reads can overlap; a cleanup must never cancel another read's pending IDs twice.
@@ -97,15 +102,6 @@ class TradovateBroker(
     private var quotes = emptyMap<String, Quote>()
     private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long, val quoteTime: Long, val lastTrade: Long?, val settlement: Long?)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
-    /** Quote subscription IDs come from the broker; never infer an alias from a price match. */
-    private val quoteChannelKeys = mutableMapOf<String, String>()
-    private val continuousQuoteContracts = mutableMapOf<String, Pair<Long, Long>>()
-    private val continuousQuotePending = mutableMapOf<String, JsonObject>()
-    private val continuousQuoteHydrations = mutableMapOf<Long, Job>()
-    private val continuousQuoteMetadataRetryAt = mutableMapOf<Long, Long>()
-    private val continuousQuoteRetryAt = mutableMapOf<String, Long>()
-    private val earlyContinuousQuotes = mutableListOf<JsonObject>()
-    private var subscribingQuote = false
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
     // v2: older entries stopped at the first page, about a month of intraday bars, and a cached series only ever grows at its end.
     private val candleCache = CandleCache(candleCacheStore, "v2-${credentials.environment.wire}-${credentials.userId}")
@@ -189,10 +185,7 @@ class TradovateBroker(
         if (credentials.expiresAtMs?.let { it - now() < 120_000 } == true) renewSession(followHosts = true)
         connected = false
         marketReady = false
-        continuousRoutes = continuousRoutes.mapValues { (symbol, route) ->
-            route.copy(spec = if (usesBrokerContinuousQuote(symbol)) route.spec.copy(tradeSymbol = null, quoteSymbol = null,
-                tradeSymbolStatus = "正在核实券商连续合约") else route.spec, checkedAt = null, validUntil = 0)
-        }
+        continuousRoutes = continuousRoutes.mapValues { (_, route) -> route.copy(checkedAt = null, validUntil = 0) }
         problem = "登录会话已交接，正在读取 ${credentials.environment.wire} 授权账户列表"
         onProgress(problem)
         publish()
@@ -242,48 +235,32 @@ class TradovateBroker(
         maintenance = scope.launch {
             while (isActive && !stopped) {
                 delay(1_000)
-                val retryAliases = lock.withLock {
-                    var expiredContinuous = false
-                    for ((symbol, route) in continuousRoutes.toMap()) if (usesBrokerContinuousQuote(symbol) &&
-                        route.spec.tradeSymbol != null && now() >= route.validUntil) {
-                        invalidateContinuousQuote(symbol, "券商连续报价已过期，等待重新核实", clearQuote = true)
-                        expiredContinuous = true
-                    }
-                    if (expiredContinuous) rebuild()
+                lock.withLock {
                     if (domTimeMs?.let { now() - it !in -5_000..15_000 } == true) {
                         domTimeMs = null
                         mutableOrderFlow.value = OrderFlowSnapshot(symbol = activeDom, connected = marketReady,
                             statusMessage = "盘口数据已过期，等待更新")
                     }
+                    priceMatchCandidates.keys.toList().forEach(::updatePriceRoute)
                     val sampleTime = latencySampleAtMs
                     if (sampleTime != null && now() - sampleTime !in 0..LATENCY_VALID_MS) {
                         latencyMs = null
                         latencySampleAtMs = null
                         publish()
                     }
-                    continuousRoutes.filter { (symbol, route) -> usesBrokerContinuousQuote(symbol) && symbol in subscribedQuotes &&
-                        route.spec.tradeSymbol == null && now() >= (continuousQuoteRetryAt[symbol] ?: 0L) }.keys.toSet().also { symbols ->
-                        symbols.forEach { continuousQuoteRetryAt[it] = now() + 120_000 }
-                    }
-                }
-                if (retryAliases.isNotEmpty()) scope.launch {
-                    try { chartWatchLock.withLock { marketSocket?.let { syncQuoteSubscriptions(it, force = retryAliases) } } }
-                    catch (cancel: CancellationException) { throw cancel }
-                    catch (_: Exception) { /* Retried at the next bounded interval. */ }
                 }
                 if (quoteWatchJob?.isActive != true && lock.withLock { quoteWatchSymbols.any { symbol ->
                     quoteWatchJobs[symbol]?.isActive != true && continuousRoutes[symbol]?.let {
-                        now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000) &&
-                            (!usesBrokerContinuousQuote(symbol) || now() >= (continuousQuoteRetryAt[symbol] ?: 0L))
+                        now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000)
                     } == true
                 } }) refreshQuoteWatch()
                 val selected = watching
                 val route = selected?.first?.let(continuousRoutes::get)
-                if (selected != null && route != null && !usesBrokerContinuousQuote(selected.first) && now() >= route.validUntil && (route.checkedAt == null || now() - route.checkedAt >= 60_000) && continuousJob?.isActive != true) {
+                if (selected != null && route != null && now() >= route.validUntil && (route.checkedAt == null || now() - route.checkedAt >= 60_000) && continuousJob?.isActive != true) {
                     continuousJob = scope.launch {
                         val before = continuousRoutes[selected.first]?.spec?.tradeSymbol
                         refreshContinuous(selected.first)
-                        if (watching == selected && before != continuousRoutes[selected.first]?.spec?.tradeSymbol) startWatch(selected)
+                        if (!usesContinuousPriceMatching(selected.first) && watching == selected && before != continuousRoutes[selected.first]?.spec?.tradeSymbol) startWatch(selected)
                     }
                 }
                 val recover = lock.withLock {
@@ -352,12 +329,7 @@ class TradovateBroker(
         publish()
         synchronizeAccount(socket)
         hydrateContracts()
-        watching?.takeIf { it.first in continuousRoutes }?.let { selected ->
-            if (usesBrokerContinuousQuote(selected.first)) chartWatchLock.withLock {
-                marketSocket?.let { syncQuoteSubscriptions(it, force = setOf(selected.first)) }
-            } else refreshContinuous(selected.first, force = true)
-            startWatch(selected)
-        }
+        watching?.takeIf { it.first in continuousRoutes }?.let { refreshContinuous(it.first, force = true); startWatch(it) }
         refreshBalances()
         problem = "账户状态已重新同步"
         publish()
@@ -451,9 +423,7 @@ class TradovateBroker(
         // Web sessions use their account token on the selected market-data gateway too.
         val token = credentials.accessToken
         lock.withLock {
-            quoteSides.clear(); quotes = emptyMap(); quoteChannelKeys.clear(); continuousQuoteContracts.clear()
-            continuousQuotePending.clear(); continuousQuoteMetadataRetryAt.clear(); continuousQuoteRetryAt.clear(); earlyContinuousQuotes.clear(); subscribingQuote = false
-            activeDom = null; subscribedDom = null; domTimeMs = null
+            quoteSides.clear(); quotes = emptyMap(); priceMatchCandidates.clear(); priceMatchers.clear(); priceMatchReady.clear(); priceMatchExpiry.clear(); realTimeQuoteSymbols.clear(); activeDom = null; subscribedDom = null; domTimeMs = null
             mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情重连，等待深度订阅")
         }
         try {
@@ -485,7 +455,6 @@ class TradovateBroker(
                     pendingQuotes.forEach { it.cancel() }
                     pendingQuotes.joinAll()
                     continuousJob?.cancelAndJoin()
-                    continuousQuoteHydrations.values.toList().forEach { it.cancelAndJoin() }
                     (watchJobs.values + chartBackfillJobs.values).toList().forEach { it.cancelAndJoin() }
                     lock.withLock { preloadJob }?.cancelAndJoin()
                     cancelledChartIds.clear()
@@ -506,7 +475,7 @@ class TradovateBroker(
         connected = false; marketReady = false; problem = "已断开"
         mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情已断开，深度已清空")
         publish()
-        latencyJob?.cancel(); maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); continuousQuoteHydrations.values.toList().forEach { it.cancel() }; reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
+        latencyJob?.cancel(); maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch {
             val pendingQuotes = lock.withLock { quoteWatchJobs.values.toList().also { quoteWatchJobs.clear() } }
             pendingQuotes.forEach { it.cancel() }
@@ -592,100 +561,37 @@ class TradovateBroker(
         catch (_: Exception) { lock.withLock { problem = "部分自选行情订阅失败，请检查行情权限"; publish() } }
     }
 
-    /** Called under lock. A previously resolved month must never survive loss of broker evidence. */
-    private fun invalidateContinuousQuote(symbol: String, reason: String, clearQuote: Boolean) {
-        val route = continuousRoutes[symbol] ?: return
-        continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(tradeSymbol = null, quoteSymbol = null,
-            tradeSymbolStatus = reason, quoteStreamSymbol = symbol), checkedAt = null, validUntil = 0))
-        if (clearQuote) { quotes = quotes - symbol; quoteSides.remove(symbol) }
-    }
-
     /** Called under chartWatchLock; chart and watch-list subscriptions share one owner. */
-    private suspend fun syncQuoteSubscriptions(socket: TradovateSocket, force: Set<String> = emptySet()) {
+    private suspend fun syncQuoteSubscriptions(socket: TradovateSocket) {
         val requested = quoteWatchSymbols + watched.map { it.first }
         // Quotes only map to loaded specs; an unconfirmed series' last contract waits for its spec.
         val loaded = instruments.filterNot { it.isContinuous }.mapTo(HashSet()) { it.symbol }
-        val wanted = (accountFlows.values.flatMap { flow ->
+        val matching = priceMatchCandidates.filterKeys { it in requested }.values.flatten()
+        val wanted = (matching + accountFlows.values.flatMap { flow ->
             flow.value.positions.map(Position::symbol) + flow.value.orders.map { it.request.symbol }
-        } + instruments.filter { it.symbol in requested }.flatMap { instrument ->
-            listOfNotNull(instrument.quoteStreamSymbol, (instrument.executionSymbol ?: instrument.quoteSymbol)?.takeIf { it in loaded })
-        }).toSet()
-        for (old in subscribedQuotes.toList().filter { it !in wanted || it in force }) {
-            if (old !in subscribedQuotes) continue
+        } + instruments.filter { it.symbol in requested }.mapNotNull { it.priceSymbol }.filter { it in loaded }).toSet()
+        for (old in subscribedQuotes.toList() - wanted) {
             socket.request("md/unsubscribequote", buildJsonObject { put("symbol", old) })
             subscribedQuotes.remove(old)
-            lock.withLock {
-                // The broker may share one underlying subscription between alias and dated symbols.
-                // Re-establish retained owners rather than assuming one unsubscribe leaves them live.
-                val oldKey = quoteChannelKeys[old]
-                val oldContract = if (usesBrokerContinuousQuote(old)) continuousQuoteContracts[old]?.first
-                    else contractSpecs.entries.firstOrNull { it.value.symbol == old }?.key
-                val affected = subscribedQuotes.filter { other -> other in wanted &&
-                    (oldKey != null && quoteChannelKeys[other] == oldKey || oldContract != null &&
-                        (if (usesBrokerContinuousQuote(other)) continuousQuoteContracts[other]?.first == oldContract
-                         else contractSpecs[oldContract]?.symbol == other)) }
-                quoteChannelKeys.remove(old)
-                if (usesBrokerContinuousQuote(old)) {
-                    continuousQuoteContracts.remove(old); continuousQuotePending.remove(old)
-                    continuousQuoteRetryAt[old] = now() + 120_000
-                    invalidateContinuousQuote(old, "券商连续报价未订阅", clearQuote = true)
-                }
-                affected.forEach { other ->
-                    subscribedQuotes.remove(other); quoteChannelKeys.remove(other)
-                    quotes = quotes - other; quoteSides.remove(other)
-                    if (usesBrokerContinuousQuote(other)) {
-                        continuousQuoteContracts.remove(other); continuousQuotePending.remove(other)
-                        invalidateContinuousQuote(other, "正在重新订阅券商连续报价", clearQuote = true)
-                    }
-                }
-                if (usesBrokerContinuousQuote(old) || affected.isNotEmpty()) rebuild()
-            }
+            realTimeQuoteSymbols.remove(old)
         }
         // One refused symbol must not leave the rest of the watch list without quotes.
         var failure: Exception? = null
         for (name in wanted - subscribedQuotes) {
-            val continuous = usesBrokerContinuousQuote(name)
-            if (continuous && name !in force && now() < (continuousQuoteRetryAt[name] ?: 0L)) continue
             try {
-                lock.withLock { subscribingQuote = true }
                 val response = socket.request("md/subscribequote", buildJsonObject { put("symbol", name) })
                 val mode = response.str("mode")
-                if ((continuous && mode != "RealTime") || (mode != null && mode != "RealTime"))
-                    throw TradovateRemoteException(403, "行情模式 ${mode ?: "未知"}，不允许使用延迟报价下单")
+                if (mode != null && mode != "RealTime") throw TradovateRemoteException(403, "行情模式 $mode，不允许使用延迟报价下单")
                 subscribedQuotes.add(name)
-                lock.withLock {
-                    chartSubscriptionKey(response["subscriptionId"])?.let { quoteChannelKeys[name] = it }
-                    subscribingQuote = false
-                    if (continuous) {
-                        continuousQuoteRetryAt[name] = now() + 120_000
-                        if (name !in quoteChannelKeys) invalidateContinuousQuote(name, "券商未返回可核实的连续报价订阅标识", clearQuote = true)
-                    }
-                    val pending = earlyContinuousQuotes.toList(); earlyContinuousQuotes.clear()
-                    pending.forEach(::applyQuoteEvent)
-                    if (continuous || pending.isNotEmpty()) rebuild()
-                }
-            } catch (cancel: CancellationException) {
-                withContext(NonCancellable) { lock.withLock { subscribingQuote = false; earlyContinuousQuotes.clear() } }
-                throw cancel
-            } catch (error: Exception) {
-                lock.withLock {
-                    subscribingQuote = false; earlyContinuousQuotes.clear()
-                    if (continuous) {
-                        continuousQuoteRetryAt[name] = now() + 120_000
-                        invalidateContinuousQuote(name, "券商连续报价订阅失败，请检查行情权限", clearQuote = true)
-                        rebuild()
-                    }
-                }
-                if (failure == null) failure = error
-            }
+                if (mode == "RealTime") realTimeQuoteSymbols.add(name)
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (error: Exception) { if (failure == null) failure = error }
         }
         failure?.let { throw it }
     }
 
     /** Read-only resolution entry point; valid routes and cached completed-day volumes are reused. */
     suspend fun refreshContinuous(symbol: String, force: Boolean = false) {
-        // These routes are established only by an identified broker alias quote, not volume ranking.
-        if (usesBrokerContinuousQuote(symbol)) return
         val resolutionLock = lock.withLock { continuousLocks.getOrPut(symbol) { Mutex() } }
         resolutionLock.withLock {
             // Cached reads do not wait for unrelated products. Admission to the bounded
@@ -697,6 +603,7 @@ class TradovateBroker(
 
     private fun needsContinuousCheck(symbol: String, force: Boolean): Boolean {
         if (!connected || !marketReady || stopped) return false
+        if (!force && usesContinuousPriceMatching(symbol) && symbol in priceMatchCandidates) return false
         val route = continuousRoutes[symbol] ?: return false
         val time = now()
         if (!force && time < route.validUntil && route.checkedAt?.let { time >= it } == true) return false
@@ -704,9 +611,90 @@ class TradovateBroker(
         return true
     }
 
+    /** Discover every listed, unexpired same-product month; incomplete discovery cannot enable orders. */
+    private suspend fun resolvePriceCandidates(symbol: String) {
+        val socket = marketSocket ?: return
+        val route = continuousRoutes[symbol] ?: return
+        lock.withLock {
+            priceMatchReady.remove(symbol)
+            priceMatchExpiry.remove(symbol)
+            priceMatchCandidates.remove(symbol)
+            priceMatchers.remove(symbol)
+            continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(tradeSymbol = null, quoteSymbol = null,
+                tradeSymbolStatus = "正在核对连续价格与月份"), checkedAt = now(), validUntil = 0))
+            rebuild()
+        }
+        try {
+            val maturities = (rest("GET", "contractMaturity/deps?masterid=${route.productId}") as? JsonArray ?: error("月份列表不可用"))
+                .map { it.jsonObject }
+            require(maturities.all { it.long("productId") == route.productId }) { "月份所属品种不一致" }
+            val active = maturities.filter { row -> requireNotNull(row.str("expirationDate")?.let(::timestamp)) { "月份到期时间缺失" } > now() }
+            require(active.isNotEmpty() && active.size <= 40) { "候选月份为空或超过行情订阅上限" }
+            val ids = active.map { requireNotNull(it.long("id")) }
+            require(ids.distinct().size == ids.size) { "月份重复" }
+            val contracts = ids.chunked(50).flatMap { chunk ->
+                (rest("GET", "contract/ldeps?masterids=${chunk.joinToString(",")}") as? JsonArray ?: error("月份合约不可用")).map { it.jsonObject }
+            }
+            val pattern = Regex(Regex.escape(symbol.removePrefix("@")) + "[FGHJKMNQUVXZ][0-9]{1,4}")
+            require(contracts.size == ids.size && contracts.map { it.long("contractMaturityId") }.toSet() == ids.toSet() &&
+                contracts.all { it.str("name")?.matches(pattern) == true && (it.long("id") ?: 0) > 0 } &&
+                contracts.map { it.str("name") }.distinct().size == contracts.size &&
+                contracts.map { it.long("id") }.distinct().size == contracts.size) { "月份合约不完整或品种不一致" }
+            lock.withLock { active.forEach { book.apply("contractMaturity", it) }; contracts.forEach { book.apply("contract", it) } }
+            val contractIds = contracts.map { it.long("id")!! }
+            hydrateContracts(contractIds)
+            val names = contracts.map { it.str("name")!! }.toSet()
+            lock.withLock {
+                check(marketReady && marketSocket === socket) { "行情连接已变化" }
+                require(contractIds.all { it in contractSpecs }) { "候选合约规格不完整" }
+                priceMatchCandidates[symbol] = names
+                priceMatchExpiry[symbol] = active.minOf { timestamp(it.str("expirationDate")!!)!! }
+                priceMatchers[symbol] = ContinuousPriceMatcher()
+            }
+            chartWatchLock.withLock { check(marketSocket === socket && marketReady); syncQuoteSubscriptions(socket) }
+            lock.withLock {
+                check(marketSocket === socket && marketReady && names.all { it in subscribedQuotes && it in realTimeQuoteSymbols }) { "候选月份实时行情订阅不完整" }
+                priceMatchReady.add(symbol)
+                updatePriceRoute(symbol)
+                rebuild()
+            }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (e: Exception) {
+            lock.withLock {
+                priceMatchReady.remove(symbol); priceMatchExpiry.remove(symbol); priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol)
+                continuousRoutes[symbol]?.let { current ->
+                    continuousRoutes = continuousRoutes + (symbol to current.copy(spec = current.spec.copy(tradeSymbol = null,
+                        quoteSymbol = null, tradeSymbolStatus = "月份待确认：${safeMessage(e.message ?: "无法读取实时行情")}"), checkedAt = now(), validUntil = 0))
+                }
+                rebuild()
+            }
+        }
+    }
+
+    /** Called under the state lock. Price matching is a heuristic and expires when observations stop. */
+    private fun updatePriceRoute(symbol: String) {
+        val route = continuousRoutes[symbol] ?: return
+        if (priceMatchExpiry[symbol]?.let { now() >= it } == true) {
+            priceMatchExpiry.remove(symbol); priceMatchReady.remove(symbol); priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol)
+            continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(tradeSymbol = null, quoteSymbol = null,
+                tradeSymbolStatus = "月份到期，正在重新核对"), checkedAt = null, validUntil = 0))
+            rebuild()
+            return
+        }
+        val winner = if (symbol in priceMatchReady) priceMatchers[symbol]?.unique(priceMatchCandidates[symbol].orEmpty(), now()) else null
+        val target = contractSpecs.values.firstOrNull { it.symbol == winner }
+        val mapped = target?.symbol
+        if (mapped == route.spec.tradeSymbol && (mapped != null || route.spec.tradeSymbolStatus == "连续价格匹配中")) return
+        val spec = (target ?: route.spec).copy(symbol = symbol, category = "连续合约", isContinuous = true,
+            tradeSymbol = mapped, quoteSymbol = mapped, tradeSymbolStatus = if (mapped == null) "连续价格匹配中" else null)
+        continuousRoutes = continuousRoutes + (symbol to route.copy(spec = spec, checkedAt = now(), validUntil = if (mapped == null) 0 else now() + 10_000))
+        rebuild()
+    }
+
     /** Only callers for the same symbol wait on each other; daily chart capacity is shared globally. */
     private suspend fun resolveContinuous(symbol: String, force: Boolean) {
         if (!needsContinuousCheck(symbol, force)) return
+        if (usesContinuousPriceMatching(symbol)) { resolvePriceCandidates(symbol); return }
         val resolutionSocket = marketSocket ?: return
         val route = continuousRoutes[symbol] ?: return
         // The last confirmed contract keeps its quotes on screen; orders still wait for this check.
@@ -832,23 +820,13 @@ class TradovateBroker(
         require(!request.symbol.startsWith("@")) { "连续合约不能直接下单，请等待主力合约解析" }
         val source = request.sourceSymbol ?: return
         val route = continuousRoutes[source] ?: errorArgument("连续合约映射尚未加载")
-        require(route.checkedAt?.let { now() >= it && now() < route.validUntil } == true && route.spec.tradeSymbol != null) {
-            if (usesBrokerContinuousQuote(source)) "券商连续报价对应的月份尚未确认或已过期" else "主力成交量依据已过期或无法确认，请重新选择连续合约"
+        if (usesContinuousPriceMatching(source)) {
+            val matched = if (source in priceMatchReady && priceMatchExpiry[source]?.let { now() < it } == true) priceMatchers[source]?.unique(priceMatchCandidates[source].orEmpty(), now()) else null
+            require(matched != null && matched == route.spec.tradeSymbol) { "连续合约对应月份未确认或匹配依据已过期，请等待行情重新匹配" }
+            require(matched in subscribedQuotes && quotes[matched]?.let(::fresh) == true) { "对应月份的实时 Bid/Ask 不可用或已过期" }
         }
+        require(route.spec.tradeSymbol != null && (usesContinuousPriceMatching(source) || route.checkedAt?.let { now() >= it && now() < route.validUntil } == true)) { "连续合约月份依据已过期或无法确认，请重新选择连续合约" }
         require(route.spec.tradeSymbol == request.symbol) { "主力合约已换月，请检查新合约并重新确认订单" }
-        if (usesBrokerContinuousQuote(source)) {
-            val alias = quotes[source]
-            val actual = quotes[request.symbol]
-            require(source in subscribedQuotes && request.symbol in subscribedQuotes && fresh(alias) && fresh(actual)) {
-                "等待券商连续报价和实际合约实时报价"
-            }
-            val tick = instruments.firstOrNull { it.symbol == request.symbol }?.tickSize ?: errorArgument("合约规格尚未加载")
-            val continuousQuote = requireNotNull(alias)
-            val datedQuote = requireNotNull(actual)
-            require(kotlin.math.abs(continuousQuote.bid - datedQuote.bid) <= tick && kotlin.math.abs(continuousQuote.ask - datedQuote.ask) <= tick) {
-                "券商连续报价与实际月份报价不一致，请核对后重试"
-            }
-        }
     }
 
     private suspend fun hydrateContracts(priority: List<Long>? = null) {
@@ -912,11 +890,9 @@ class TradovateBroker(
                             if (root != null && Regex("[A-Z0-9]{1,16}").matches(root)) {
                                 val symbol = "@$root"
                                 // A remembered leader the server still lists shows quotes before this session's check.
-                                val remembered = continuousEvidence.leader(symbol)?.takeIf { name -> !usesBrokerContinuousQuote(symbol) && book.list("contract").any { it.str("name") == name } }
+                                val remembered = continuousEvidence.leader(symbol)?.takeIf { name -> !usesContinuousPriceMatching(symbol) && book.list("contract").any { it.str("name") == name } }
                                 if (symbol !in continuousRoutes) continuousRoutes = continuousRoutes + (symbol to ContinuousRoute(
-                                    requireNotNull(product.long("id")), spec.copy(symbol = symbol, category = "连续合约", isContinuous = true,
-                                        quoteSymbol = remembered, quoteStreamSymbol = symbol.takeIf(::usesBrokerContinuousQuote),
-                                        tradeSymbolStatus = if (usesBrokerContinuousQuote(symbol)) "正在核实券商连续合约" else null)))
+                                    requireNotNull(product.long("id")), spec.copy(symbol = symbol, category = "连续合约", isContinuous = true, quoteSymbol = remembered)))
                             }
                             rebuild()
                         }
@@ -1055,10 +1031,7 @@ class TradovateBroker(
 
     private fun chartCacheKey(series: Pair<String, Timeframe>, source: String): Pair<String, Timeframe> = source to series.second
 
-    override fun history(symbol: String, timeframe: Timeframe): List<Candle> {
-        val series = symbol to timeframe
-        return history[series] ?: emptyList()
-    }
+    override fun history(symbol: String, timeframe: Timeframe): List<Candle> = history[symbol to timeframe] ?: emptyList()
     override suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
         require(startMs >= 0 && startMs < endMs) { "历史数据日期范围无效" }
         check(marketReady && !stopped) { "券商行情尚未连接" }
@@ -1076,7 +1049,7 @@ class TradovateBroker(
             before = next - 1
         }
         val bars = lock.withLock { load.candles.filter { it.timeMs in startMs until endMs } }
-        val warning = if (symbol.startsWith("@")) "$symbol 使用券商连续历史；拼接／复权规则未确认" else null
+        val warning = if (symbol.startsWith("@")) "券商连续历史的拼接或复权规则未确认" else null
         return HistoricalRangeResult(bars, warning, cacheable = true)
     }
     override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))
@@ -1130,16 +1103,13 @@ class TradovateBroker(
                 val cached = if (deep) emptyList() else lock.withLock { cachedHistory[cacheSeries] } ?: candleCache.read(cacheSeries, now()).also { bars ->
                     lock.withLock { cachedHistory[cacheSeries] = bars }
                 }
-                lock.withLock {
-                    if (series !in history) history = history + (series to cached)
-                    publish()
-                }
+                lock.withLock { if (series !in history) history = history + (series to cached); publish() }
                 try {
                     // The leader of the chart being worked on is checked here; the other charts' symbols are checked with the watch list.
-                    if (series == watching && symbol in continuousRoutes && !usesBrokerContinuousQuote(symbol) && continuousJob?.isActive != true) continuousJob = scope.launch {
+                    if (series == watching && symbol in continuousRoutes && continuousJob?.isActive != true) continuousJob = scope.launch {
                         val before = continuousRoutes[symbol]?.spec?.tradeSymbol
                         refreshContinuous(symbol)
-                        if (watching == series && before != continuousRoutes[symbol]?.spec?.tradeSymbol) startWatch(series)
+                        if (!usesContinuousPriceMatching(symbol) && watching == series && before != continuousRoutes[symbol]?.spec?.tradeSymbol) startWatch(series)
                     }
                     syncQuoteSubscriptions(socket)
                     if (!forceRefresh && lock.withLock { charts.values.any { it.page.let { page -> page.series == series && page.sourceSymbol == source &&
@@ -1542,157 +1512,40 @@ class TradovateBroker(
         } }
     }
 
-    /** Called under lock. An alias route is accepted only from the broker's identified subscription. */
-    private fun applyContinuousQuote(symbol: String, q: JsonObject) {
-        val route = continuousRoutes[symbol] ?: return
-        val time = q.str("timestamp")?.let(::timestamp) ?: return
-        if (now() - time !in -5_000..15_000) return
-        val cid = q.long("contractId")?.takeIf { it > 0 }
-        val previousContract = continuousQuoteContracts[symbol]
-        if (previousContract != null && time < previousContract.second) return
-        if (previousContract != null && time == previousContract.second && cid != previousContract.first) {
-            invalidateContinuousQuote(symbol, "券商连续报价对应的月份有冲突", clearQuote = true)
-            return
-        }
-        if (cid == null || previousContract?.first != cid) {
-            invalidateContinuousQuote(symbol, "正在核实券商连续合约", clearQuote = true)
-            continuousQuotePending.remove(symbol)
-        }
-        if (cid != null) continuousQuoteContracts[symbol] = cid to time else continuousQuoteContracts.remove(symbol)
-        val entries = q["entries"] as? JsonObject ?: return
-        val bid = (entries["Bid"] as? JsonObject)?.priceValue("price")
-        val ask = (entries["Offer"] as? JsonObject)?.priceValue("price")
-        val trade = (entries["Trade"] as? JsonObject)?.priceValue("price")?.takeIf { it > 0 && it % route.spec.tickSize == 0L }
-        val settlement = (entries["SettlementPrice"] as? JsonObject)?.priceValue("price")?.takeIf { it > 0 }
-        if (bid == null && ask == null && trade == null && settlement == null) return
-        if (listOfNotNull(bid, ask).any { it <= 0 || it % route.spec.tickSize != 0L }) return
-        val previous = quoteSides[symbol]
-        if (previous != null && previous.time > time) return
-        val quoteTime = if (bid != null || ask != null) time else previous?.quoteTime ?: time
-        val next = QuoteSides(bid ?: previous?.bid, ask ?: previous?.ask, time, quoteTime,
-            trade ?: previous?.lastTrade, settlement ?: previous?.settlement)
-        quoteSides[symbol] = next
-        val completeBid = next.bid
-        val completeAsk = next.ask
-        if (completeBid == null || completeAsk == null || completeAsk < completeBid) {
-            quotes = quotes - symbol
-            invalidateContinuousQuote(symbol, "券商连续买卖报价不完整", clearQuote = false)
-            return
-        }
-        val aliasQuote = Quote(completeBid, completeAsk, next.quoteTime, next.lastTrade, next.settlement)
-        quotes = quotes + (symbol to aliasQuote)
-        if (cid == null) {
-            invalidateContinuousQuote(symbol, "券商未返回可核实的合约 ID", clearQuote = false)
-            return
-        }
-        val contract = book.item("contract", cid)
-        val maturity = contract?.long("contractMaturityId")?.let { book.item("contractMaturity", it) }
-        val spec = contractSpecs[cid]
-        val expires = maturity?.str("expirationDate")?.let(::timestamp)
-        if (contract == null || maturity == null || spec == null || expires == null) {
-            continuousQuotePending[symbol] = q
-            invalidateContinuousQuote(symbol, "正在核实券商连续合约", clearQuote = false)
-            hydrateContinuousQuote(symbol, cid)
-            return
-        }
-        val pattern = Regex(Regex.escape(symbol.drop(1)) + "[FGHJKMNQUVXZ][0-9]{1,4}")
-        if (maturity.long("productId") != route.productId || contract.str("name") != spec.symbol ||
-            !pattern.matches(spec.symbol) || expires <= now() || !fresh(aliasQuote)) {
-            invalidateContinuousQuote(symbol, "券商返回的合约品种或有效期无法确认", clearQuote = false)
-            return
-        }
-        val changed = route.spec.tradeSymbol != spec.symbol
-        continuousQuotePending.remove(symbol)
-        continuousRoutes = continuousRoutes + (symbol to route.copy(spec = spec.copy(symbol = symbol, category = "连续合约",
-            isContinuous = true, tradeSymbol = spec.symbol, quoteSymbol = spec.symbol, quoteStreamSymbol = symbol,
-            tradeSymbolStatus = null), checkedAt = now(), validUntil = minOf(expires, aliasQuote.timeMs + 15_000)))
-        if (changed) scope.launch { syncWatchQuotes() }
-    }
-
-    /** Hydrate only broker-provided IDs; no volume-based fallback is used for these routes. */
-    private fun hydrateContinuousQuote(symbol: String, cid: Long) {
-        if (continuousQuoteHydrations[cid]?.isActive == true) return
-        if (now() < (continuousQuoteMetadataRetryAt[cid] ?: 0L)) return
-        val socket = marketSocket
-        continuousQuoteHydrations[cid] = scope.launch {
-            try {
-                hydrateContracts(listOf(cid))
-                val missing = lock.withLock {
-                    book.item("contract", cid)?.long("contractMaturityId")?.takeIf { id ->
-                        book.item("contractMaturity", id)?.str("expirationDate")?.let(::timestamp) == null
-                    }
-                }
-                if (missing != null) {
-                    val item = rest("GET", "contractMaturity/item?id=$missing").jsonObject
-                    require(item.long("id") == missing) { "合约月份标识不匹配" }
-                    lock.withLock { book.apply("contractMaturity", item) }
-                }
-            } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { /* Keep the route unconfirmed until metadata can be verified. */ }
-            lock.withLock {
-                val maturity = book.item("contract", cid)?.long("contractMaturityId")?.let { book.item("contractMaturity", it) }
-                if (contractSpecs[cid] == null || maturity?.str("expirationDate")?.let(::timestamp) == null)
-                    continuousQuoteMetadataRetryAt[cid] = now() + 60_000
-                else continuousQuoteMetadataRetryAt.remove(cid)
-                if (socket === marketSocket && continuousQuoteContracts[symbol]?.first == cid)
-                    continuousQuotePending[symbol]?.let(::applyQuoteEvent)
-                rebuild()
-            }
-            syncWatchQuotes()
-        }
-    }
-
-    /** Keep alias and dated prices separate unless the server identifies the same subscription. */
-    private fun applyQuoteEvent(q: JsonObject) {
-        val key = chartSubscriptionKey(q["id"]) ?: chartSubscriptionKey(q["contractId"])
-        val aliases = quoteChannelKeys.filter { (name, channel) -> usesBrokerContinuousQuote(name) && channel == key }.keys
-        if (aliases.size > 1) {
-            aliases.forEach { invalidateContinuousQuote(it, "券商连续报价订阅标识冲突", clearQuote = true) }
-            return
-        }
-        if (aliases.isEmpty() && subscribingQuote &&
-            (q["id"] == null || key !in quoteChannelKeys.values)) {
-            if (earlyContinuousQuotes.size < 128) earlyContinuousQuotes.add(q)
-            return
-        }
-        val alias = aliases.singleOrNull()
-        if (alias != null) applyContinuousQuote(alias, q)
-        val spec = contractSpecs[q.long("contractId")] ?: return
-        if (spec.symbol !in subscribedQuotes) return
-        val directChannel = quoteChannelKeys[spec.symbol]
-        if (alias != null && directChannel != key) return
-        if (q["id"] != null && directChannel != key) return
-        val productId = q.long("contractId")?.let { book.item("contract", it)?.long("contractMaturityId") }
-            ?.let { book.item("contractMaturity", it)?.long("productId") }
-        if (q["id"] == null && productId != null && subscribedQuotes.any { usesBrokerContinuousQuote(it) &&
-                it !in quoteChannelKeys && continuousRoutes[it]?.productId == productId }) return
-        if (q["id"] == null && productId != null && quoteChannelKeys.any { (name, channel) ->
-                usesBrokerContinuousQuote(name) && continuousRoutes[name]?.productId == productId && channel != key }) return
-        val entries = q["entries"] as? JsonObject ?: return
-        val incomingBid = (entries["Bid"] as? JsonObject)?.priceValue("price")
-        val incomingAsk = (entries["Offer"] as? JsonObject)?.priceValue("price")
-        val incomingTrade = (entries["Trade"] as? JsonObject)?.priceValue("price")?.takeIf { it > 0 && it % spec.tickSize == 0L }
-        val incomingSettlement = (entries["SettlementPrice"] as? JsonObject)?.priceValue("price")?.takeIf { it > 0 }
-        if (incomingBid == null && incomingAsk == null && incomingTrade == null && incomingSettlement == null) return
-        val time = q.str("timestamp")?.let(::timestamp) ?: return
-        val previous = quoteSides[spec.symbol]
-        if (previous != null && previous.time > time) return
-        if (listOfNotNull(incomingBid, incomingAsk).any { it <= 0 || it % spec.tickSize != 0L }) return
-        val quoteTime = if (incomingBid != null || incomingAsk != null) time else previous?.quoteTime ?: time
-        val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time, quoteTime,
-            incomingTrade ?: previous?.lastTrade, incomingSettlement ?: previous?.settlement)
-        quoteSides[spec.symbol] = next
-        if (incomingTrade != null && now() - time in -5_000..5_000) recoverStalledContinuousCharts(spec.symbol, time)
-        val bid = next.bid ?: return
-        val ask = next.ask ?: return
-        if (ask < bid) return
-        quotes = quotes + (spec.symbol to Quote(bid, ask, quoteTime, next.lastTrade, next.settlement))
-    }
-
     private suspend fun marketEvent(frame: JsonObject) = lock.withLock {
         val data = frame["d"] as? JsonObject ?: return@withLock
         if (frame.str("e") == "md") {
-            data.array("quotes").forEach(::applyQuoteEvent)
+            for (q in data.array("quotes")) {
+                val spec = contractSpecs[q.long("contractId")] ?: continue
+                val entries = q["entries"] as? JsonObject ?: continue
+                val incomingBid = (entries["Bid"] as? JsonObject)?.priceValue("price")
+                val incomingAsk = (entries["Offer"] as? JsonObject)?.priceValue("price")
+                val incomingTrade = (entries["Trade"] as? JsonObject)?.priceValue("price")?.takeIf { it > 0 && it % spec.tickSize == 0L }
+                val incomingSettlement = (entries["SettlementPrice"] as? JsonObject)?.priceValue("price")?.takeIf { it > 0 }
+                if (incomingBid == null && incomingAsk == null && incomingTrade == null && incomingSettlement == null) continue
+                val time = q.str("timestamp")?.let(::timestamp) ?: continue
+                if (incomingTrade != null && now() - time in -5_000..5_000) {
+                    priceMatchCandidates.filterValues { spec.symbol in it }.keys.forEach { alias ->
+                        priceMatchers[alias]?.trade(spec.symbol, incomingTrade, now())
+                        updatePriceRoute(alias)
+                    }
+                }
+                val previous = quoteSides[spec.symbol]
+                if (previous != null && previous.time > time) continue
+                if (listOfNotNull(incomingBid, incomingAsk).any { it <= 0 || it % spec.tickSize != 0L }) continue
+                // A trade or settlement update must not make old bid/ask prices appear fresh for order checks.
+                val quoteTime = if (incomingBid != null || incomingAsk != null) time else previous?.quoteTime ?: time
+                val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time, quoteTime,
+                    incomingTrade ?: previous?.lastTrade, incomingSettlement ?: previous?.settlement)
+                quoteSides[spec.symbol] = next
+                // A fresh trade on the verified execution contract is evidence of market activity, not a replacement
+                // for a continuous candle. Recover only a stalled subscription; never synthesize bars from quotes.
+                if (incomingTrade != null && now() - time in -5_000..5_000) recoverStalledContinuousCharts(spec.symbol, time)
+                val bid = next.bid ?: continue
+                val ask = next.ask ?: continue
+                if (ask < bid) continue
+                quotes = quotes + (spec.symbol to Quote(bid, ask, quoteTime, next.lastTrade, next.settlement))
+            }
         }
         if (frame.str("e") == "md") for (dom in data.array("doms")) {
             val spec = contractSpecs[dom.long("contractId")] ?: continue
@@ -1751,6 +1604,10 @@ class TradovateBroker(
         if (!historical && chart.str("s") != "db" && incoming.isNotEmpty() && incoming.size == chart.array("bars").size && key.first in continuousRoutes) {
             continuousChartProgress[key] = now()
             incoming.maxOfOrNull(Candle::timeMs)?.let { newest -> continuousChartLiveBar[key] = maxOf(continuousChartLiveBar[key] ?: newest, newest) }
+            if (usesContinuousPriceMatching(key.first)) incoming.maxByOrNull(Candle::timeMs)?.let { bar ->
+                priceMatchers[key.first]?.chart(bar.close, now())
+                updatePriceRoute(key.first)
+            }
         }
         page.load.accept(incoming, historical, endOfHistory, incoming.size == chart.array("bars").size, countForBackfill = !page.liveOnly)
         val bars = page.load.candles
@@ -2022,8 +1879,6 @@ class TradovateBroker(
                     contractSpecs[p.long("contractId")]?.symbol == request.symbol && (p.long("netPos") ?: 0) != 0L } }
                 require(!hasProtection || !existingNet) { "已有净仓时不能再添加括号单，请先在官网核对保护关系" }
                 val body = orderBody(accountId, requestId, request, spec)
-                // The broker's continuous contract may roll during the preceding account checks.
-                validateContinuous(request)
                 sendWrite(accountId, requestId, "place", null, if (hasProtection) "order/placeoso" else "order/placeorder", body)
             }
             override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) = command(accountId, requestId, "modify:$orderId:$expectedVersion:$entryPrice") {

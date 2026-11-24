@@ -20,18 +20,6 @@ internal data class CompletedSession(
 )
 internal data class VolumeLeader(val contract: JsonObject, val maturity: JsonObject, val session: CompletedSession, val volume: Long)
 
-// Preserve the existing stock-index route. Other continuous futures use the broker's alias quote.
-private val EQUITY_INDEX_ROOTS = setOf(
-    "ES", "MES", "NES", "NQ", "MNQ", "NNQ", "YM", "MYM", "NDOW", "RTY", "M2K", "N2K",
-    "EMD", "MMC", "SMC", "MSC", "SME", "NKD", "NIY", "IBV", "RS1", "RSG", "RSV", "R2G", "R2V",
-    "FT1", "FTU", "FT5", "DVE", "EI", "SPC", "MUTM", "RAYF", "STM",
-    "XAZ", "XAY", "XAP", "XAE", "XAF", "XAV", "XAI", "XAB", "XAR", "XAK", "XAU",
-    "SXB", "SXI", "SXT", "SXO", "SXR", "SOX", "NDI", "RDI", "SDI", "SDA", "RDA", "NDA",
-    "QSPX", "QNDX", "QDOW", "QRTY",
-)
-internal fun usesBrokerContinuousQuote(symbol: String): Boolean =
-    symbol.startsWith("@") && symbol.length > 1 && symbol.drop(1).uppercase() !in EQUITY_INDEX_ROOTS
-
 // Publication gaps are allowed only with fresh daily-history evidence, and never indefinitely.
 private const val MAX_CALENDAR_TAIL_AGE_MS = 72 * 60 * 60 * 1000L
 // A newer session cannot both start and complete between two checks this far apart.
