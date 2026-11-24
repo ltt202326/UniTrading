@@ -21,7 +21,9 @@ jobs:
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - name: Test continuous chart mapping
-        run: ./gradlew.bat :tradovate-broker:desktopTest --tests '*ContinuousContractsTest*' --tests '*HistoryPreloadTest*' --tests '*MarketWatchConcurrencyTest*' --no-daemon
+        run: ./gradlew.bat :tradovate-broker:desktopTest --tests '*ContinuousContractsTest*' --tests '*HistoryPreloadTest*' --tests '*MarketWatchConcurrencyTest*' --no-daemon --init-script .github/continuous-test-logging.gradle
+      - name: Test Rithmic continuous chart mapping
+        run: ./gradlew.bat :rithmic-broker:desktopTest --tests '*RithmicBrokerTest*' --no-daemon --init-script .github/continuous-test-logging.gradle
       - name: Test replay records
         run: ./gradlew.bat :composeApp:desktopTest --tests '*ReplayRecordsTest*' --tests '*ReplayDateRangeTest*' --no-daemon
       - name: Package Windows application
@@ -41,3 +43,12 @@ jobs:
           path: dist/UniTrading-Continuous-Chart-Preview-Windows-x64.zip
           compression-level: 0
           if-no-files-found: error
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: continuous-chart-test-reports
+          path: |
+            tradovate-broker/build/test-results/desktopTest/*.xml
+            rithmic-broker/build/test-results/desktopTest/*.xml
+          if-no-files-found: ignore
