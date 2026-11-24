@@ -23,4 +23,15 @@ class ReplayRecordsTest {
         assertFails { ReplayRecords(store).save(ReplayRecord("id", "MES", "USD", 1, 2, emptyList())) }
         assertEquals("broken", store.read(ReplayRecords.KEY))
     }
+
+    @Test fun discardingOneSessionPreservesOtherSessionsAndStoredEquity() {
+        val store = MemorySnapshotStore()
+        val records = ReplayRecords(store)
+        val saved = ReplayRecord("keep", "MES", "USD", 50_000_000L, 3, emptyList(), status = "失败",
+            equity = listOf(ReplayEquityPoint(2, 48_000_000L)))
+        records.save(saved)
+        records.save(saved.copy(id = "discard"))
+        records.delete("discard")
+        assertEquals(listOf(saved), ReplayRecords(store).list())
+    }
 }

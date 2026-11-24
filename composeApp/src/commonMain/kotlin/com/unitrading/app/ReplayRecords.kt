@@ -4,7 +4,10 @@ import com.unitrading.broker.ClosedTrade
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/** Local, closed-trade snapshots. Unreadable data is never replaced with an empty list. */
+@Serializable
+internal data class ReplayEquityPoint(val timeMs: Long, val equityMicros: Long)
+
+/** Local replay snapshots. Unreadable data is never replaced with an empty list. */
 @Serializable
 internal data class ReplayRecord(
     val id: String,
@@ -13,6 +16,11 @@ internal data class ReplayRecord(
     val initialMicros: Long,
     val savedAtMs: Long,
     val trades: List<ClosedTrade>,
+    val status: String = "已保存",
+    val endedAtMs: Long? = null,
+    val finalEquityMicros: Long? = null,
+    val equity: List<ReplayEquityPoint> = emptyList(),
+    val priceDecimals: Int? = null,
 )
 
 internal class ReplayRecords(private val store: SnapshotStore) {
@@ -22,6 +30,8 @@ internal class ReplayRecords(private val store: SnapshotStore) {
         val rows = list().filterNot { it.id == record.id } + record
         store.write(KEY, Json.encodeToString(rows))
     }
+
+    fun delete(id: String) { store.write(KEY, Json.encodeToString(list().filterNot { it.id == id })) }
 
     companion object { internal const val KEY = "replay-records-v1" }
 }
