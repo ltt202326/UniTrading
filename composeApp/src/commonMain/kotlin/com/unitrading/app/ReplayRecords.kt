@@ -25,7 +25,7 @@ internal data class ReplayRecord(
 )
 
 internal class ReplayRecords(private val store: SnapshotStore) {
-    fun list(): List<ReplayRecord> = store.read(KEY)?.let { Json.decodeFromString<List<ReplayRecord>>(it) }.orEmpty()
+    fun list(): List<ReplayRecord> = (store.read(KEY) ?: store.read(LEGACY_KEY))?.let { Json.decodeFromString<List<ReplayRecord>>(it) }.orEmpty()
 
     fun save(record: ReplayRecord) {
         val rows = list().filterNot { it.id == record.id } + record
@@ -34,5 +34,8 @@ internal class ReplayRecords(private val store: SnapshotStore) {
 
     fun delete(id: String) { store.write(KEY, Json.encodeToString(list().filterNot { it.id == id })) }
 
-    companion object { internal const val KEY = "replay-records-v1" }
+    companion object {
+        internal const val KEY = "replay-records-v2"
+        internal const val LEGACY_KEY = "replay-records-v1"
+    }
 }

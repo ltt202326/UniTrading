@@ -34,4 +34,14 @@ class ReplayRecordsTest {
         records.delete("discard")
         assertEquals(listOf(saved), ReplayRecords(store).list())
     }
+
+    @Test fun importsLegacySessionsWithoutOverwritingTheOldVersion() {
+        val legacy = """[{"id":"old","symbol":"MES","currency":"USD","initialMicros":50000000,"savedAtMs":1,"trades":[]}]"""
+        val store = MemorySnapshotStore().apply { write(ReplayRecords.LEGACY_KEY, legacy) }
+        val records = ReplayRecords(store)
+        assertEquals("old", records.list().single().id)
+        records.save(ReplayRecord("new", "MES", "USD", 50_000_000L, 2, emptyList()))
+        assertEquals(listOf("old", "new"), records.list().map { it.id })
+        assertEquals(legacy, store.read(ReplayRecords.LEGACY_KEY))
+    }
 }
