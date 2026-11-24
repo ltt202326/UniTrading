@@ -194,7 +194,7 @@ private fun ReplayCalendarDialog(value: String, onDismiss: () -> Unit, onSelect:
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { month = month.minus(1, DateTimeUnit.YEAR) }, modifier = Modifier.testTag("replay-calendar-prev-year")) { Text("«") }
                 IconButton(onClick = { month = month.minus(1, DateTimeUnit.MONTH) }, modifier = Modifier.testTag("replay-calendar-prev-month")) { Icon(AppIcons.ChevronLeft, "上个月") }
-                Text("${month.year}年${month.month.number}月", style = MaterialTheme.typography.titleSmall)
+                Text("${month.year}年${month.month.ordinal + 1}月", style = MaterialTheme.typography.titleSmall)
                 IconButton(onClick = { month = month.plus(1, DateTimeUnit.MONTH) }, modifier = Modifier.testTag("replay-calendar-next-month")) { Icon(AppIcons.ChevronRight, "下个月") }
                 IconButton(onClick = { month = month.plus(1, DateTimeUnit.YEAR) }, modifier = Modifier.testTag("replay-calendar-next-year")) { Text("»") }
             }
