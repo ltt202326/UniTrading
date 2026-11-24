@@ -54,7 +54,7 @@ jobs:
       - run: sdkmanager --install "platforms;android-37.0" "platforms;android-37.2"
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - name: Verify independent chart session controls
-        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*DesktopWorkspaceTabsUiTest.sessionChoiceFollowsEachSplitChart' --tests '*SettingsPageTest.timeZoneMovesToTradingSettingsAndSupportsUtcExtremes' --tests '*ChartContextMenuUiTest*' --tests '*HistoricalReplayUiTest*' --tests '*ChartWindowsUiTest.favoritesFloatAcrossSplitChartsAndTargetTheSelectedChart' --tests '*PriceAxisUiTest*' --no-daemon
+        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*DesktopWorkspaceTabsUiTest.sessionChoiceFollowsEachSplitChart' --tests '*SettingsPageTest.timeZoneMovesToTradingSettingsAndSupportsUtcExtremes' --tests '*ChartContextMenuUiTest*' --tests '*HistoricalReplayUiTest*' --tests '*ReplayHistoryCacheTest*' --tests '*ReplayOvernightTest*' --tests '*ChartWindowsUiTest.favoritesFloatAcrossSplitChartsAndTargetTheSelectedChart' --tests '*PriceAxisUiTest*' --no-daemon
 
       - name: Upload failed test report
         if: failure()

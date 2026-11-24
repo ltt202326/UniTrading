@@ -2,6 +2,7 @@ package com.unitrading.app
 
 import com.unitrading.broker.*
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
@@ -21,18 +22,24 @@ class ReplayHistoryCacheTest {
         var peak = 0
         var calls = 0
         var cacheable = true
+        var concurrentGate: CompletableDeferred<Unit>? = null
         override fun openSession(accountId: String): AccountSession = error("not used")
         override fun history(symbol: String, timeframe: Timeframe) = emptyList<Candle>()
         override suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
             active++; peak = maxOf(peak, active); calls++
-            try { delay(5); return HistoricalRangeResult(listOf(Candle(startMs, 100, 100, 100, 100)), cacheable = cacheable) }
+            try {
+                if (active == 2) concurrentGate?.complete(Unit)
+                concurrentGate?.await()
+                delay(5)
+                return HistoricalRangeResult(listOf(Candle(startMs, 100, 100, 100, 100)), cacheable = cacheable)
+            }
             finally { active-- }
         }
     }
 
     @Test fun boundedParallelRequestsPersistAndReuseCompletedChunks() = runTest {
         val store = MemorySnapshotStore()
-        val broker = Broker()
+        val broker = Broker().apply { concurrentGate = CompletableDeferred() }
         val first = ReplayHistoryCache(store) { 200 * DAY }.load(broker, "MESZ6", Timeframe.M1, 0, 60 * DAY)
         assertEquals(2, first.downloaded)
         assertEquals(2, broker.peak)
