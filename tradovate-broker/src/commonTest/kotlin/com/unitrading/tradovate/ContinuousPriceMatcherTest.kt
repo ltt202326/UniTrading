@@ -22,6 +22,12 @@ class ContinuousPriceMatcherTest {
         repeat(3) { delayed.chart(100L + it, it * 1000L); delayed.trade("MGCZ6", 100L + it, it * 1000L + 5000) }
         assertNull(delayed.unique(setOf("MGCZ6"), 7500))
     }
+    @Test fun matchesWhenManyFutureMonthsAreListed() {
+        val matcher = ContinuousPriceMatcher()
+        repeat(3) { i -> matcher.chart(100L + i, i * 1000L); matcher.trade("CLH7", 100L + i, i * 1000L) }
+        val candidates = (1..120).map { "CL-CANDIDATE-$it" }.toSet() + "CLH7"
+        assertEquals("CLH7", matcher.unique(candidates, 2500))
+    }
     @Test fun scopeCoversOilMetalsAndCryptoButPreservesIndexes() {
         for (root in listOf("GC", "MGC", "SI", "SIL", "SL", "CL", "MCL", "BTC", "MBT")) assertTrue(usesContinuousPriceMatching("@$root"))
         for (root in listOf("ES", "MES", "NQ", "MNQ", "YM", "MYM")) assertFalse(usesContinuousPriceMatching("@$root"))

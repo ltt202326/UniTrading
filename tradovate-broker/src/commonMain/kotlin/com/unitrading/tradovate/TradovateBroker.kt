@@ -629,7 +629,7 @@ class TradovateBroker(
                 .map { it.jsonObject }
             require(maturities.all { it.long("productId") == route.productId }) { "月份所属品种不一致" }
             val active = maturities.filter { row -> requireNotNull(row.str("expirationDate")?.let(::timestamp)) { "月份到期时间缺失" } > now() }
-            require(active.isNotEmpty() && active.size <= 40) { "候选月份为空或超过行情订阅上限" }
+            require(active.isNotEmpty() && active.size <= 200) { "候选月份为空或超过行情订阅上限" }
             val ids = active.map { requireNotNull(it.long("id")) }
             require(ids.distinct().size == ids.size) { "月份重复" }
             val contracts = ids.chunked(50).flatMap { chunk ->
@@ -642,7 +642,8 @@ class TradovateBroker(
                 contracts.map { it.long("id") }.distinct().size == contracts.size) { "月份合约不完整或品种不一致" }
             lock.withLock { active.forEach { book.apply("contractMaturity", it) }; contracts.forEach { book.apply("contract", it) } }
             val contractIds = contracts.map { it.long("id")!! }
-            hydrateContracts(contractIds)
+            // hydrateContracts caps each pass; do not silently omit long-dated oil months.
+            for (chunk in contractIds.chunked(50)) hydrateContracts(chunk)
             val names = contracts.map { it.str("name")!! }.toSet()
             lock.withLock {
                 check(marketReady && marketSocket === socket) { "行情连接已变化" }
