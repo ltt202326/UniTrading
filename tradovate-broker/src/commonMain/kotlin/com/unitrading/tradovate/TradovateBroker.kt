@@ -686,7 +686,7 @@ class TradovateBroker(
         val mapped = target?.symbol
         if (mapped == route.spec.tradeSymbol && (mapped != null || route.spec.tradeSymbolStatus == "连续价格匹配中")) return
         val spec = (target ?: route.spec).copy(symbol = symbol, category = "连续合约", isContinuous = true,
-            tradeSymbol = mapped, quoteSymbol = mapped, tradeSymbolStatus = if (mapped == null) "连续价格匹配中" else null)
+            tradeSymbol = mapped, quoteSymbol = mapped, tradeSymbolStatus = if (mapped == null) "连续价格匹配中" else "价格匹配（非券商确认）")
         continuousRoutes = continuousRoutes + (symbol to route.copy(spec = spec, checkedAt = now(), validUntil = if (mapped == null) 0 else now() + 10_000))
         rebuild()
     }
@@ -823,6 +823,7 @@ class TradovateBroker(
         if (usesContinuousPriceMatching(source)) {
             val matched = if (source in priceMatchReady && priceMatchExpiry[source]?.let { now() < it } == true) priceMatchers[source]?.unique(priceMatchCandidates[source].orEmpty(), now()) else null
             require(matched != null && matched == route.spec.tradeSymbol) { "连续合约对应月份未确认或匹配依据已过期，请等待行情重新匹配" }
+            require(priceMatchCandidates[source].orEmpty().all { it in subscribedQuotes && it in realTimeQuoteSymbols }) { "候选月份的实时行情订阅不完整" }
             require(matched in subscribedQuotes && quotes[matched]?.let(::fresh) == true) { "对应月份的实时 Bid/Ask 不可用或已过期" }
         }
         require(route.spec.tradeSymbol != null && (usesContinuousPriceMatching(source) || route.checkedAt?.let { now() >= it && now() < route.validUntil } == true)) { "连续合约月份依据已过期或无法确认，请重新选择连续合约" }
@@ -1524,15 +1525,15 @@ class TradovateBroker(
                 val incomingSettlement = (entries["SettlementPrice"] as? JsonObject)?.priceValue("price")?.takeIf { it > 0 }
                 if (incomingBid == null && incomingAsk == null && incomingTrade == null && incomingSettlement == null) continue
                 val time = q.str("timestamp")?.let(::timestamp) ?: continue
+                val previous = quoteSides[spec.symbol]
+                if (previous != null && previous.time > time) continue
+                if (listOfNotNull(incomingBid, incomingAsk).any { it <= 0 || it % spec.tickSize != 0L }) continue
                 if (incomingTrade != null && now() - time in -5_000..5_000) {
                     priceMatchCandidates.filterValues { spec.symbol in it }.keys.forEach { alias ->
                         priceMatchers[alias]?.trade(spec.symbol, incomingTrade, now())
                         updatePriceRoute(alias)
                     }
                 }
-                val previous = quoteSides[spec.symbol]
-                if (previous != null && previous.time > time) continue
-                if (listOfNotNull(incomingBid, incomingAsk).any { it <= 0 || it % spec.tickSize != 0L }) continue
                 // A trade or settlement update must not make old bid/ask prices appear fresh for order checks.
                 val quoteTime = if (incomingBid != null || incomingAsk != null) time else previous?.quoteTime ?: time
                 val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time, quoteTime,

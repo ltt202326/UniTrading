@@ -267,7 +267,10 @@ class ContinuousContractsTest {
         assertEquals("MCLH7", broker.instruments.single { it.symbol == "@MCL" }.priceSymbol)
         assertNotNull(broker.market.value.quotes["MCLH7"])
         val session = broker.openSession("100")
-        assertTrue(session.preview(OrderRequest("MCLH7", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MCL")).valid)
+        val matchedOrder = OrderRequest("MCLH7", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MCL")
+        assertTrue(session.preview(matchedOrder).valid)
+        assertTrue(session.placeOrder("matched", matchedOrder).accepted)
+        assertEquals("MCLH7", wire.delegate.requests.single { it.path == "order/placeorder" }.body?.str("symbol"))
         assertFalse(session.preview(OrderRequest("MCLZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MCL")).valid)
         wire.clock += 11_000
         assertFalse(session.preview(OrderRequest("MCLH7", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MCL")).valid,
