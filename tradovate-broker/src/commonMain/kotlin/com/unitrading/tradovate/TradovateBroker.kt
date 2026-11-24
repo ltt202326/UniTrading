@@ -273,12 +273,13 @@ class TradovateBroker(
                 }
                 if (quoteWatchJob?.isActive != true && lock.withLock { quoteWatchSymbols.any { symbol ->
                     quoteWatchJobs[symbol]?.isActive != true && continuousRoutes[symbol]?.let {
-                        now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000)
+                        now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000) &&
+                            (!usesBrokerContinuousQuote(symbol) || now() >= (continuousQuoteRetryAt[symbol] ?: 0L))
                     } == true
                 } }) refreshQuoteWatch()
                 val selected = watching
                 val route = selected?.first?.let(continuousRoutes::get)
-                if (selected != null && route != null && now() >= route.validUntil && (route.checkedAt == null || now() - route.checkedAt >= 60_000) && continuousJob?.isActive != true) {
+                if (selected != null && route != null && !usesBrokerContinuousQuote(selected.first) && now() >= route.validUntil && (route.checkedAt == null || now() - route.checkedAt >= 60_000) && continuousJob?.isActive != true) {
                     continuousJob = scope.launch {
                         val before = continuousRoutes[selected.first]?.spec?.tradeSymbol
                         refreshContinuous(selected.first)
@@ -351,7 +352,12 @@ class TradovateBroker(
         publish()
         synchronizeAccount(socket)
         hydrateContracts()
-        watching?.takeIf { it.first in continuousRoutes }?.let { refreshContinuous(it.first, force = true); startWatch(it) }
+        watching?.takeIf { it.first in continuousRoutes }?.let { selected ->
+            if (usesBrokerContinuousQuote(selected.first)) chartWatchLock.withLock {
+                marketSocket?.let { syncQuoteSubscriptions(it, force = setOf(selected.first)) }
+            } else refreshContinuous(selected.first, force = true)
+            startWatch(selected)
+        }
         refreshBalances()
         problem = "账户状态已重新同步"
         publish()
@@ -639,6 +645,7 @@ class TradovateBroker(
         var failure: Exception? = null
         for (name in wanted - subscribedQuotes) {
             val continuous = usesBrokerContinuousQuote(name)
+            if (continuous && name !in force && now() < (continuousQuoteRetryAt[name] ?: 0L)) continue
             try {
                 lock.withLock { subscribingQuote = true }
                 val response = socket.request("md/subscribequote", buildJsonObject { put("symbol", name) })
@@ -664,6 +671,7 @@ class TradovateBroker(
                 lock.withLock {
                     subscribingQuote = false; earlyContinuousQuotes.clear()
                     if (continuous) {
+                        continuousQuoteRetryAt[name] = now() + 120_000
                         invalidateContinuousQuote(name, "券商连续报价订阅失败，请检查行情权限", clearQuote = true)
                         rebuild()
                     }
@@ -1128,7 +1136,7 @@ class TradovateBroker(
                 }
                 try {
                     // The leader of the chart being worked on is checked here; the other charts' symbols are checked with the watch list.
-                    if (series == watching && symbol in continuousRoutes && continuousJob?.isActive != true) continuousJob = scope.launch {
+                    if (series == watching && symbol in continuousRoutes && !usesBrokerContinuousQuote(symbol) && continuousJob?.isActive != true) continuousJob = scope.launch {
                         val before = continuousRoutes[symbol]?.spec?.tradeSymbol
                         refreshContinuous(symbol)
                         if (watching == series && before != continuousRoutes[symbol]?.spec?.tradeSymbol) startWatch(series)
@@ -2014,6 +2022,8 @@ class TradovateBroker(
                     contractSpecs[p.long("contractId")]?.symbol == request.symbol && (p.long("netPos") ?: 0) != 0L } }
                 require(!hasProtection || !existingNet) { "已有净仓时不能再添加括号单，请先在官网核对保护关系" }
                 val body = orderBody(accountId, requestId, request, spec)
+                // The broker's continuous contract may roll during the preceding account checks.
+                validateContinuous(request)
                 sendWrite(accountId, requestId, "place", null, if (hasProtection) "order/placeoso" else "order/placeorder", body)
             }
             override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) = command(accountId, requestId, "modify:$orderId:$expectedVersion:$entryPrice") {

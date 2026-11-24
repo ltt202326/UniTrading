@@ -333,6 +333,36 @@ class ContinuousContractsTest {
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
     }
 
+    @Test fun foreignContractIdNeverBecomesTheAliasOrderTarget() = runTest {
+        val wire = Wire(root = "MGC").apply {
+            aliasContractId = 999
+            val snapshot = delegate.snapshot
+            delegate.snapshot = JsonObject(snapshot + mapOf(
+                "contracts" to JsonArray(contracts + json("""{"id":999,"name":"MESZ6","contractMaturityId":302}""")),
+                "contractMaturities" to JsonArray(maturities + json("""{"id":302,"productId":401,"expirationDate":"2027-03-20T00:00:00Z"}""")),
+                "products" to JsonArray(snapshot.array("products") + json("""{"id":401,"name":"MES","description":"Micro S&P","currencyId":1,"productType":"Futures","tickSize":0.25,"valuePerPoint":5}"""))
+            ))
+        }
+        val broker = ready(wire)
+        val instrument = broker.instruments.single { it.symbol == "@MGC" }
+        assertNull(instrument.executionSymbol)
+        assertNotNull(broker.market.value.quotes["@MGC"])
+        assertTrue(instrument.tradeSymbolStatus?.contains("无法确认") == true)
+        val order = OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MGC")
+        assertFalse(broker.openSession("100").preview(order).valid)
+    }
+
+    @Test fun quoteFromAnUnrelatedSubscriptionCannotChangeTheAliasMonth() = runTest {
+        val wire = Wire(root = "MGC")
+        val broker = ready(wire)
+        wire.clock += 1_000
+        val instant = kotlin.time.Instant.fromEpochMilliseconds(wire.clock)
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"id":77777,"contractId":201,"timestamp":"$instant","entries":{"Bid":{"price":5500},"Offer":{"price":5500.25}}}]}}]""")
+        runCurrent()
+        assertEquals("MGCZ6", broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
+        assertNull(broker.market.value.quotes["MGCH7"])
+    }
+
     @Test fun expiredBrokerAliasQuoteCannotAuthorizeAnOrder() = runTest {
         val wire = Wire(root = "MGC")
         val broker = ready(wire)

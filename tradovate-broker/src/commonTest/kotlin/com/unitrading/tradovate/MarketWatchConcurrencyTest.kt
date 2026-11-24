@@ -11,7 +11,7 @@ class MarketWatchConcurrencyTest {
 
     private inner class Wire(includeThirdProduct: Boolean = false, val delegate: MockTradovateWire = MockTradovateWire()) : TradovateWire by delegate {
         val now = timestamp("2026-12-29T12:00Z")!!
-        val roots = if (includeThirdProduct) listOf("MES", "MNQ", "MGC") else listOf("MES", "MNQ")
+        val roots = if (includeThirdProduct) listOf("MES", "MNQ", "RTY") else listOf("MES", "MNQ")
         val contracts = roots.flatMapIndexed { index, root ->
             listOf("Z6", "H7", "M7").mapIndexed { month, suffix ->
                 json("""{"id":${200 + index * 10 + month},"name":"$root$suffix","contractMaturityId":${300 + index * 10 + month}}""")
@@ -213,22 +213,22 @@ class MarketWatchConcurrencyTest {
         advanceTimeBy(2_000); runCurrent()
         assertEquals(setOf("MES", "MNQ"), wire.mappingRequests.keys)
         val queuedAt = testScheduler.currentTime
-        val queued = launch { broker.refreshContinuous("@MGC") }
+        val queued = launch { broker.refreshContinuous("@RTY") }
         advanceTimeBy(168_000); runCurrent()
         assertFalse(queued.isCompleted)
-        assertNull(wire.mappingRequests["MGC"], "Only two products may occupy the resolution pipeline")
+        assertNull(wire.mappingRequests["RTY"], "Only two products may occupy the resolution pipeline")
         wire.mappingGates.getValue("MES").complete(Unit)
         wire.mappingGates.getValue("MNQ").complete(Unit)
         advanceTimeBy(20_000); runCurrent()
         assertTrue(first.isCompleted && second.isCompleted)
         assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
         assertEquals("MNQZ6", broker.instruments.single { it.symbol == "@MNQ" }.executionSymbol)
-        assertEquals(1, wire.mappingRequests["MGC"])
+        assertEquals(1, wire.mappingRequests["RTY"])
         assertTrue(testScheduler.currentTime - queuedAt > 180_000)
         assertFalse(queued.isCompleted, "The queued product gets its full timeout after admission")
-        wire.mappingGates.getValue("MGC").complete(Unit)
+        wire.mappingGates.getValue("RTY").complete(Unit)
         queued.join()
-        assertEquals("MGCZ6", broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
+        assertEquals("RTYZ6", broker.instruments.single { it.symbol == "@RTY" }.executionSymbol)
     }
 
     @Test fun validCachedRouteDoesNotWaitForTwoUnrelatedResolutions() = runTest {
@@ -236,11 +236,11 @@ class MarketWatchConcurrencyTest {
         val broker = ready(wire)
         broker.refreshContinuous("@MES")
         wire.mappingGates["MNQ"] = CompletableDeferred()
-        wire.mappingGates["MGC"] = CompletableDeferred()
+        wire.mappingGates["RTY"] = CompletableDeferred()
         val first = launch { broker.refreshContinuous("@MNQ") }
-        val second = launch { broker.refreshContinuous("@MGC") }
+        val second = launch { broker.refreshContinuous("@RTY") }
         advanceTimeBy(2_000); runCurrent()
-        assertEquals(setOf("MES", "MNQ", "MGC"), wire.mappingRequests.keys)
+        assertEquals(setOf("MES", "MNQ", "RTY"), wire.mappingRequests.keys)
         val cached = launch { broker.refreshContinuous("@MES") }
         runCurrent()
         assertTrue(cached.isCompleted, "A valid route needs neither a resolution slot nor another server request")
@@ -248,7 +248,7 @@ class MarketWatchConcurrencyTest {
         assertEquals(1, wire.mappingRequests["MES"])
         assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
         wire.mappingGates.getValue("MNQ").complete(Unit)
-        wire.mappingGates.getValue("MGC").complete(Unit)
+        wire.mappingGates.getValue("RTY").complete(Unit)
         joinAll(first, second)
     }
 }
