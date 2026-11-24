@@ -803,6 +803,13 @@ class RithmicBrokerTest {
         assertEquals("MGCZ6", broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
         assertEquals(listOf(540000L, 540000L, 550000L, 550000L, 550000L), broker.history("@MGC", Timeframe.M5).map { it.close })
         assertEquals(1, server.requests(Rt.REQUEST_TIME_BAR_UPDATE).count { it.str(Rf.SYMBOL) == "MGCZ6" && it.int(Rf.REQUEST) == RithmicEnums.REQUEST_SUBSCRIBE })
+        val marker = FAKE_TIME / 1_000 / 300 * 300 * 1_000
+        server.plant(RithmicEnums.INFRA_HISTORY).push {
+            int32(Rf.TEMPLATE_ID, Rt.TIME_BAR); string(Rf.SYMBOL, "MGCZ6"); int32(Rf.BAR_MARKER, ((marker + 300_000) / 1_000).toInt())
+            double(Rf.OPEN_PRICE, 5501.0); double(Rf.HIGH_PRICE, 5503.0); double(Rf.LOW_PRICE, 5500.0); double(Rf.CLOSE_PRICE, 5502.5); int64(Rf.BAR_VOLUME, 40)
+        }
+        runCurrent()
+        assertEquals(broker.history("MGCZ6", Timeframe.M5).last(), broker.history("@MGC", Timeframe.M5).last())
         val end = FAKE_TIME / Timeframe.M5.millis * Timeframe.M5.millis
         val replay = broker.historicalRange("@MGC", Timeframe.M5, end - 6 * Timeframe.M5.millis, end)
         assertEquals(listOf(540000L, 540000L, 550000L, 550000L, 550000L), replay.candles.map { it.close })

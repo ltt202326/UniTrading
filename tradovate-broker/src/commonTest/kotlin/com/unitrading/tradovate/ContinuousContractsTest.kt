@@ -36,6 +36,7 @@ class ContinuousContractsTest {
         private var channelId = 1000
         val dailyRequests = mutableListOf<JsonObject>()
         val chartRequests = mutableListOf<JsonObject>()
+        val mgcChartIds = mutableMapOf<String, Long>()
         val maturities get() = listOf(300L, 301L).map { id -> json("""{"id":$id,"productId":400,"isFront":${id == 300L},"expirationDate":"2027-03-20T00:00:00Z"}""") }
         val contracts get() = listOf(json("""{"id":200,"name":"${root}Z6","contractMaturityId":300}"""),
             json("""{"id":201,"name":"${root}H7","contractMaturityId":301}"""))
@@ -95,6 +96,7 @@ class ContinuousContractsTest {
                             delegate.market.bodies["md/getChart"] = text.substringAfter("\n\n")
                             val id = ++channelId
                             val symbol = body.str("symbol")
+                            if (symbol != null) mgcChartIds[symbol] = id.toLong()
                             val newer = kotlin.time.Instant.fromEpochMilliseconds(CONTINUOUS_TIME - 300_000).toString()
                             val older = kotlin.time.Instant.fromEpochMilliseconds(CONTINUOUS_TIME - 600_000).toString()
                             val value = when (symbol) { "@MGC" -> 2000; "MGCZ6" -> 2100; else -> 2200 }
@@ -315,6 +317,12 @@ class ContinuousContractsTest {
         assertTrue(wire.chartRequests.any { it.str("symbol") == "@MGC" })
         assertTrue(wire.chartRequests.any { it.str("symbol") == "MGCZ6" })
         assertEquals(listOf(1_900_000_000L, 2_100_000_000L), broker.history("@MGC", Timeframe.M5).map { it.close })
+        broker.watchAll(listOf("@MGC" to Timeframe.M5, "MGCZ6" to Timeframe.M5)); runCurrent()
+        val id = requireNotNull(wire.mgcChartIds["MGCZ6"])
+        val stamp = kotlin.time.Instant.fromEpochMilliseconds(CONTINUOUS_TIME).toString()
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,"s":"s","bars":[{"timestamp":"$stamp","open":2110,"high":2110,"low":2110,"close":2110}]}]}}]""")
+        runCurrent()
+        assertEquals(broker.history("MGCZ6", Timeframe.M5).last(), broker.history("@MGC", Timeframe.M5).last())
         val replay = broker.historicalRange("@MGC", Timeframe.M5, CONTINUOUS_TIME - 900_000, CONTINUOUS_TIME)
         assertEquals(listOf(1_900_000_000L, 2_100_000_000L), replay.candles.map { it.close })
         assertTrue(replay.warning.orEmpty().contains("复权"))

@@ -937,13 +937,17 @@ class TradovateBroker(
 
     private fun chartCacheKey(series: Pair<String, Timeframe>, source: String): Pair<String, Timeframe> = source to series.second
 
+    private fun verifiedMgcSource(): String? {
+        val route = continuousRoutes["@MGC"] ?: return null
+        val checked = route.checkedAt ?: return null
+        return route.spec.tradeSymbol?.takeIf { now() >= checked && now() < route.validUntil }
+    }
+
     override fun history(symbol: String, timeframe: Timeframe): List<Candle> {
         val series = symbol to timeframe
         val vendor = history[series].orEmpty()
         if (symbol != "@MGC") return vendor
-        val leader = continuousRoutes[symbol]?.let { route ->
-            route.spec.tradeSymbol?.takeIf { route.checkedAt != null && now() >= route.checkedAt && now() < route.validUntil }
-        } ?: return vendor
+        val leader = verifiedMgcSource() ?: return vendor
         val dated = history[leader to timeframe].orEmpty()
         val joined = overlayContinuousCandles(vendor, dated)
         return if (series in extendedHistory) joined else joined.takeLast(CHART_BARS)
@@ -968,11 +972,11 @@ class TradovateBroker(
         }
         if (symbol != "@MGC") return HistoricalRangeResult(loadSource(symbol),
             if (symbol == "@MCL") "MCL 使用券商连续历史，换月及复权规则未确认" else null, cacheable = true)
-        if (continuousRoutes[symbol]?.spec?.tradeSymbol == null) refreshContinuous(symbol)
-        val leader = continuousRoutes[symbol]?.spec?.tradeSymbol ?: error("MGC 主力合约未确认，请稍后重试")
+        if (verifiedMgcSource() == null) refreshContinuous(symbol)
+        val leader = verifiedMgcSource() ?: error("MGC 主力合约未确认，请稍后重试")
         val vendor = loadSource(symbol)
         val dated = loadSource(leader)
-        check(continuousRoutes[symbol]?.spec?.tradeSymbol == leader) { "MGC 主力合约已变化，请重新读取历史" }
+        check(verifiedMgcSource() == leader) { "MGC 主力合约已变化，请重新读取历史" }
         val note = "MGC 重叠时优先 $leader；其余为券商连续历史，换月及复权规则未确认"
         return HistoricalRangeResult(overlayContinuousCandles(vendor, dated), note, cacheable = vendor.isNotEmpty())
     }
@@ -987,7 +991,7 @@ class TradovateBroker(
         if (stopped) return
         requestedWatch = series.distinct()
         requestedExtended = extended
-        val mgc = continuousRoutes["@MGC"]?.spec?.tradeSymbol
+        val mgc = verifiedMgcSource()
         val overlays = if (mgc == null) emptyList() else requestedWatch.filter { it.first == "@MGC" }.map { mgc to it.second }
         val next = (requestedWatch + overlays).distinct()
         val previous = watched
