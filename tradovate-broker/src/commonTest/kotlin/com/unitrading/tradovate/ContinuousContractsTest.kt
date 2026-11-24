@@ -306,6 +306,17 @@ class ContinuousContractsTest {
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
     }
 
+    @Test fun manualSynchronizationRetriesAnUnidentifiedAliasSubscription() = runTest {
+        val wire = Wire(root = "MGC").apply { missingAliasSubscriptionId = true }
+        val broker = ready(wire)
+        assertNull(broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
+        wire.missingAliasSubscriptionId = false
+        broker.resynchronize(); runCurrent()
+        assertEquals("MGCZ6", broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
+        val order = OrderRequest("MGCZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MGC")
+        assertTrue(broker.openSession("100").preview(order).valid)
+    }
+
     @Test fun brokerAliasRollChangesExecutableMonthAndRejectsOldDrafts() = runTest {
         val wire = Wire(root = "MCL")
         val broker = ready(wire)
