@@ -19,7 +19,8 @@ class ContinuousContractUiTest {
     @Test fun chartUsesContinuousSymbolWhileConfirmationPinsDatedTargetAndRolloverClearsIt() {
         val demo = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).registry.plugins.first()
         val dated = demo.instruments.first()
-        val alias = dated.copy(symbol = "@TEST", isContinuous = true, tradeSymbol = dated.symbol)
+        val alias = dated.copy(symbol = "@TEST", isContinuous = true, tradeSymbol = dated.symbol,
+            continuousHistoryNotice = "较早历史如有则来自券商连续数据；拼接／复权规则未确认")
         val changes = MutableStateFlow(BrokerCatalog(listOf(alias) + demo.instruments, demo.accounts))
         var chartSymbol: String? = null
         var previewed: OrderRequest? = null
@@ -44,7 +45,8 @@ class ContinuousContractUiTest {
         }
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("continuous-route").assertTextContains("下单 / 买卖报价 ${dated.symbol}", substring = true)
+        compose.onNodeWithTag("continuous-route").assertTextContains("当前 K 线 / 下单 / 报价 ${dated.symbol}", substring = true)
+        compose.onNodeWithTag("continuous-route").assertTextContains("拼接／复权规则未确认", substring = true)
         compose.runOnIdle {
             assertEquals("@TEST", chartSymbol)
             assertEquals(dated.symbol, previewed?.symbol)
@@ -76,6 +78,7 @@ class ContinuousContractUiTest {
             override val instruments get() = changes.value.instruments
             // The screen asks for every open chart at once; the first is the one being worked on.
             override fun watchAll(series: List<Pair<String, Timeframe>>) { chartSymbol = series.first().first }
+            override fun watchAllWithExtendedHistory(series: List<Pair<String, Timeframe>>, extended: Set<Pair<String, Timeframe>>) = watchAll(series)
             override fun history(symbol: String, timeframe: Timeframe) = demo.history(dated.symbol, timeframe)
             override fun openSession(accountId: String): AccountSession {
                 val session = demo.openSession(accountId)
@@ -105,6 +108,7 @@ class ContinuousContractUiTest {
             override val catalog = changes
             override val instruments get() = changes.value.instruments
             override fun watchAll(series: List<Pair<String, Timeframe>>) { charts += series.first().first }
+            override fun watchAllWithExtendedHistory(series: List<Pair<String, Timeframe>>, extended: Set<Pair<String, Timeframe>>) = watchAll(series)
             override fun history(symbol: String, timeframe: Timeframe) = demo.history(saved.symbol, timeframe)
         }
         val store = MemorySnapshotStore()
