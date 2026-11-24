@@ -568,29 +568,32 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     } else {
                         val completed = state.trades.size
                         val wins = state.trades.count { it.pnlMicros > 0 }
-                        ReplaySection("本地回放记录") {
+                        ReplaySection("本次回放") {
+                            Text("已平仓记录自动保存在本机", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ReplaySummaryTile("净盈亏", realized?.let { money(it, true) } ?: "—", Modifier.weight(1f))
+                                ReplaySummaryTile("胜率", if (completed == 0) "—" else "${wins * 100 / completed}%", Modifier.weight(1f))
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ReplaySummaryTile("平仓笔数", "$completed", Modifier.weight(1f))
+                                ReplaySummaryTile("最大回撤", analysis?.let { money(it.maxClosedDrawdown) } ?: "—", Modifier.weight(1f))
+                            }
+                            OutlinedButton(onClick = {
+                                report = ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
+                                    Clock.System.now().toEpochMilliseconds(), historyTrades)
+                            }, modifier = Modifier.fillMaxWidth().testTag("replay-current-report")) { Text("查看本次完整分析") }
                             Button(onClick = {
                                 runCatching { records?.list().orEmpty().sortedByDescending { it.savedAtMs } }
                                     .onSuccess { savedRecords = it; recordsExpanded = true }
                                     .onFailure { message = "读取本地记录失败：${it.message ?: "请检查存储"}" }
-                            }, enabled = records != null) { Text("选择本地记录分析") }
-                            DropdownMenu(expanded = recordsExpanded, onDismissRequest = { recordsExpanded = false }) {
-                                if (savedRecords.isEmpty()) DropdownMenuItem(text = { Text("暂无保存的记录") }, onClick = { recordsExpanded = false })
-                                savedRecords.forEach { saved -> DropdownMenuItem(text = {
-                                    Text("${saved.symbol} · ${saved.trades.size} 笔 · ${Instant.fromEpochMilliseconds(saved.savedAtMs)}")
-                                }, onClick = { report = saved; recordsExpanded = false }) }
-                            }
+                            }, enabled = records != null, modifier = Modifier.fillMaxWidth().testTag("replay-records-open")) { Text("选择历史回放记录") }
                         }
                         ReplaySection("交易表现") {
-                            ReplayMetric("平仓次数", "$completed")
                             ReplayMetric("盈利 / 亏损", "$wins / ${state.trades.count { it.pnlMicros < 0 }}")
-                            ReplayMetric("胜率", if (completed == 0) "—" else "${wins * 100 / completed}%")
-                            ReplayMetric("已实现盈亏", realized?.let { money(it, true) } ?: "—")
                             ReplayMetric("平均盈亏", if (completed == 0 || realized == null) "—" else money(realized / completed, true))
                             analysis?.let { stats ->
                                 ReplayMetric("总盈利", money(stats.grossProfit, true))
                                 ReplayMetric("总亏损", money(stats.grossLoss, true))
-                                ReplayMetric("平仓权益最大回撤", money(stats.maxClosedDrawdown))
                                 ReplayMetric("最佳交易", stats.best?.let { money(it, true) } ?: "—")
                                 ReplayMetric("最差交易", stats.worst?.let { money(it, true) } ?: "—")
                             }
@@ -607,6 +610,29 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             }
         }
     }
+    if (recordsExpanded) AlertDialog(onDismissRequest = { recordsExpanded = false },
+        title = { Text("本地回放记录") },
+        text = {
+            Column(Modifier.widthIn(min = 300.dp, max = 520.dp).heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("选择一条记录查看交易分析", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (savedRecords.isEmpty()) Text("暂无回放记录。开始回放后，记录会自动保存到本机。", Modifier.padding(vertical = 16.dp),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                savedRecords.forEach { saved ->
+                    Surface(onClick = { report = saved; recordsExpanded = false }, modifier = Modifier.fillMaxWidth().testTag("replay-record-${saved.id}"),
+                        shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(saved.symbol, style = MaterialTheme.typography.titleSmall)
+                                Text("${chartDateTime(saved.savedAtMs, zoneId = input.zone.zoneId)} · ${saved.trades.size} 笔", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text("查看", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+        }, confirmButton = { TextButton(onClick = { recordsExpanded = false }) { Text("关闭") } })
     if (startCalendar) ReplayCalendarDialog(
         runCatching { chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId).take(10) }.getOrDefault("1970-01-01"),
         onDismiss = { startCalendar = false }) { date ->
@@ -695,6 +721,16 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             .onSuccess { riskConfig = it; risk = ReplayRiskState.initial(it); showAccount = false; message = null }
             .onFailure { accountError = it.message }
     }, modifier = Modifier.testTag("replay-account-save")) { Text("保存") } }, dismissButton = { TextButton(onClick = { showAccount = false; drawdownMode = riskConfig.mode; allowOvernight = riskConfig.allowOvernight; cutoffText = replayCutoffText(riskConfig.overnightCutoffMinutes) }) { Text("取消") } })
+}
+
+@Composable
+private fun ReplaySummaryTile(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(modifier, shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+        }
+    }
 }
 
 @Composable

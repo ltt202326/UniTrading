@@ -1,7 +1,6 @@
 package com.unitrading.ui
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -17,8 +16,6 @@ import com.unitrading.app.ReplayHistoryCache
 import com.unitrading.broker.*
 import com.unitrading.chart.chartBarDateTime
 import com.unitrading.chart.parseChartTime
-import com.unitrading.chart.IntervalControl
-import com.unitrading.chart.IntervalOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -54,13 +51,13 @@ internal data class ReplayPrepared(val instruments: List<Instrument>, val range:
 /** Select the complete replay universe and fetch its range before opening the local simulator. */
 @Composable
 internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, persistentCache: Boolean, instruments: List<Instrument>, initial: Instrument,
-    zone: ChartTimeZone, referenceTime: Long, initialFrame: Timeframe, intervals: IntervalOptions, initialRegular: Boolean,
+    zone: ChartTimeZone, referenceTime: Long, initialFrame: Timeframe, initialRegular: Boolean,
     onDismiss: () -> Unit, onReady: (ReplayPrepared) -> Unit) {
     val today = remember(referenceTime, zone) { Instant.fromEpochMilliseconds(referenceTime.takeIf { it > 0 } ?: Clock.System.now().toEpochMilliseconds())
         .toLocalDateTime(TimeZone.of(zone.zoneId)).date }
     var start by remember { mutableStateOf(today.minus(30, DateTimeUnit.DAY).toString()) }
     var end by remember { mutableStateOf(today.toString()) }
-    var frame by remember { mutableStateOf(initialFrame) }
+    val frame = if (initialFrame.isSeconds && initialRegular) Timeframe.M1 else initialFrame
     var calendarForStart by remember { mutableStateOf<Boolean?>(null) }
     var query by remember { mutableStateOf("") }
     val selected = remember { mutableStateMapOf(initial.symbol to initial) }
@@ -84,29 +81,31 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                     ReplayDateField(start, "开始日期", "replay-range-start", !loading, Modifier.weight(1f)) { calendarForStart = true }
                     ReplayDateField(end, "结束日期（含当天）", "replay-range-end", !loading, Modifier.weight(1f)) { calendarForStart = false }
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("回放图表周期", style = MaterialTheme.typography.labelMedium)
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                        IntervalControl(frame, { if (!loading) { frame = it; prepared = null } }, intervals)
-                    }
-                    Text("进入回放后仍可调整；秒级数据取决于券商支持。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                Text(if (frame != initialFrame) "常规时段暂不支持秒线，回放将从 1 分钟开始；进入后可切换周期。" else "回放沿用当前图表周期，进入后可切换。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(query, { query = it }, Modifier.weight(1f).testTag("replay-symbol-filter"),
-                        label = { Text("筛选品种") }, singleLine = true, enabled = !loading)
-                    TextButton(onClick = { scope.launch { runCatching { broker.searchInstruments(query) }.onFailure { error = "合约搜索失败" } } }, enabled = !loading && query.isNotBlank()) { Text("查询") }
+                        label = { Text("搜索品种或合约") }, singleLine = true, enabled = !loading)
+                    TextButton(onClick = { scope.launch { runCatching { broker.searchInstruments(query) }.onFailure { error = "合约搜索失败" } } }, enabled = !loading && query.isNotBlank()) { Text("搜索") }
                 }
-                Text("已选 ${selected.size} 个品种", style = MaterialTheme.typography.labelMedium)
-                Column(Modifier.fillMaxWidth().heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("回放品种", style = MaterialTheme.typography.titleSmall)
+                    Text("已选 ${selected.size}", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                }
+                Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                  Column(Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
+                    if (choices.isEmpty()) Text("没有匹配的品种，请尝试搜索。", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     choices.take(100).forEach { item ->
                         Row(Modifier.fillMaxWidth().testTag("replay-select-${item.symbol}").clickable(enabled = !loading) {
                             if (selected.containsKey(item.symbol)) selected.remove(item.symbol) else selected[item.symbol] = item
                             prepared = null
                         }, verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = selected.containsKey(item.symbol), onCheckedChange = null, enabled = !loading)
-                            Column { Text(item.symbol); Text(item.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            Column(Modifier.padding(vertical = 5.dp)) { Text(item.symbol, style = MaterialTheme.typography.bodyMedium); Text(item.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         }
                     }
+                  }
                 }
                 Row(Modifier.fillMaxWidth().clickable(enabled = !loading) { useCache = !useCache; prepared = null }, verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = useCache, onCheckedChange = null, enabled = !loading, modifier = Modifier.testTag("replay-use-cache"))
@@ -134,7 +133,6 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                         val range = replayDateRange(start, end, zone)
                         if (range == null) { error = "请输入有效日期，结束日期不能早于开始日期"; return@Button }
                         if (selected.isEmpty()) { error = "请至少选择一个品种"; return@Button }
-                        if (initialRegular && frame.isSeconds) { error = "秒线暂不支持常规时段，请切换分钟周期，或先在主图切换 ETH"; return@Button }
                         val chosen = selected.values.toList()
                         error = null; prepared = null
                         progress = "正在准备历史数据…"

@@ -106,14 +106,13 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-calendar-2026-12-29").performClick()
         compose.onNodeWithTag("replay-range-end").performScrollTo().performClick()
         compose.onNodeWithTag("replay-calendar-2026-12-30").performClick()
-        compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("replay-setup"))).performScrollTo().performClick()
-        compose.onNodeWithTag("interval-option-15").performScrollTo().performClick()
+        compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("replay-setup"))).assertDoesNotExist()
         compose.onNodeWithTag("replay-select-OTHRZ6").performScrollTo().performClick()
         compose.onNodeWithTag("replay-load").performScrollTo().performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-begin").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("replay-begin").performScrollTo().performClick()
         awaitReplay()
-        compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 TESTZ6 15分钟")
+        compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 TESTZ6 1分钟")
         compose.onNode(hasTestTag("chart-layers") and hasAnyAncestor(hasTestTag("historical-replay"))).assertDoesNotExist()
         compose.onNodeWithTag("replay-history-toggle").assertExists()
         compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("historical-replay"))).performClick()
@@ -126,21 +125,6 @@ class HistoricalReplayUiTest {
             it.config.getOrNull(SemanticsProperties.ContentDescription)?.any { value -> value.contains("OTHRZ6") } == true
         } }
         assertTrue(broker.placed.isEmpty())
-    }
-
-    @Test fun setupLoadsSelectedSecondIntervalForReplay() {
-        val broker = OfflineOrderBroker()
-        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
-        compose.setContent { TradingScreen(runtime) }
-        compose.onNodeWithTag("open-historical-replay").performScrollTo().performClick()
-        compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("replay-setup"))).performScrollTo().performClick()
-        compose.onNodeWithTag("interval-option-30s").performScrollTo().performClick()
-        compose.onNodeWithTag("replay-load").performScrollTo().performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-begin").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("replay-begin").performScrollTo().performClick()
-        awaitReplay()
-        compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 TESTZ6 30秒")
-        compose.onNodeWithTag("replay-step-30s").assertExists()
     }
 
     @Test fun replayAxisMenuRetainsSelectionsAndRightClickUsesLocalConfirmation() {

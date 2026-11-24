@@ -1387,7 +1387,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }, singleRow = singleLine)
                     val persistentReplayCache = LocalChartPlatform.current != ChartPlatform.IOS
                     if (replaySetup) ReplaySetupDialog(plugin, runtime.replayHistory, persistentReplayCache, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
-                        market.simulatedTimeMs, selectedFrame, intervals, chartPreferences.sessionForChart(target) == ChartSession.REGULAR, onDismiss = { replaySetup = false }, onReady = { ready ->
+                        market.simulatedTimeMs, selectedFrame, chartPreferences.sessionForChart(target) == ChartSession.REGULAR, onDismiss = { replaySetup = false }, onReady = { ready ->
                             replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
                             replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear()
                             replaySeries.clear(); replaySeries.putAll(ready.data); replayLoading.clear(); replayRevision++
