@@ -1,4 +1,4 @@
-name: Continuous contract alignment preview
+name: Broker continuous quote preview
 on:
   push:
     branches: ['build/continuous-alignment-20261125']
@@ -25,11 +25,11 @@ jobs:
       - name: Name the Android preview
         run: |
           mkdir -p dist
-          cp androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk dist/UniTrading-Continuous-Alignment-Android-preview.apk
+          cp androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk dist/UniTrading-Broker-Continuous-Android-preview.apk
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Continuous-Alignment-Android-preview
-          path: dist/UniTrading-Continuous-Alignment-Android-preview.apk
+          name: Broker-Continuous-Android-preview
+          path: dist/UniTrading-Broker-Continuous-Android-preview.apk
           if-no-files-found: error
   tests:
     runs-on: ubuntu-latest
@@ -53,7 +53,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: Continuous-Alignment-Test-Results
+          name: Broker-Continuous-Test-Results
           path: |
             tradovate-broker/build/test-results/desktopTest/*.xml
             composeApp/build/test-results/desktopTest/*.xml
@@ -83,10 +83,10 @@ jobs:
           if (-not (Test-Path "$app/UniTrading.exe")) { throw 'Windows executable missing' }
           if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host missing' }
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-Continuous-Alignment-Windows-x64.zip'
+          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-Broker-Continuous-Windows-x64.zip'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Continuous-Alignment-Windows-x64
-          path: dist/UniTrading-Continuous-Alignment-Windows-x64.zip
+          name: Broker-Continuous-Windows-x64
+          path: dist/UniTrading-Broker-Continuous-Windows-x64.zip
           compression-level: 0
           if-no-files-found: error

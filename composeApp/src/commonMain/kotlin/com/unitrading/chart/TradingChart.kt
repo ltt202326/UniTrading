@@ -424,8 +424,8 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) Text(if (instrument.continuousHistoryNotice != null)
-            "连续图表 ${instrument.symbol} · 当前 K 线 / 下单 / 报价 ${instrument.executionLabel} · ${instrument.continuousHistoryNotice}" else
+        if (instrument.isContinuous) Text(if (instrument.quoteStreamSymbol != null)
+            "连续图表 / 报价 ${instrument.symbol} · 下单 ${instrument.executionLabel}" else
             "连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",
             Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route"), style = MaterialTheme.typography.labelSmall, color = colors.Accent)
         if (compact && !chrome.sharedToolbar) {

@@ -7,11 +7,7 @@ import kotlinx.coroutines.flow.emptyFlow
 /** A separate, bounded replay download. End is exclusive; no live order account is involved. */
 data class HistoricalRangeResult(val candles: List<Candle>, val warning: String? = null,
     /** True only when the broker completed the requested history read; cache is not a completeness guarantee. */
-    val cacheable: Boolean = false,
-    /** For a continuous series, identifies where dated-leader bars start within this range. */
-    val leaderHistory: LeaderHistory? = null)
-
-data class LeaderHistory(val firstCandleMs: Long?, val sourceSymbol: String? = null)
+    val cacheable: Boolean = false)
 
 interface BrokerPlugin {
     val descriptor: BrokerDescriptor

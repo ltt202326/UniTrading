@@ -255,7 +255,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val symbol = instrument.symbol
         val executionSymbol = instrument.executionSymbol
         var previousExecutionSymbol by remember(accountKey, symbol) { mutableStateOf(executionSymbol) }
-        val quote = market.quotes[executionSymbol]
+        val quote = market.quotes[instrument.priceSymbol]
         // The main chart's interval outlives a change of broker, whichever chart was being worked on then.
         val mainTimeframe = remember { arrayOf(savedChart.lastTimeframe ?: Timeframe.M5) }
         var timeframe by remember(plugin) { mutableStateOf(mainTimeframe[0]) }
@@ -568,7 +568,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             restoring = null
         }
         /** The continuous chart of a contract, while one trades it or last did. A dated chart has only that contract's own, thinner history. */
-        fun continuousChart(contract: String) = catalog.instruments.firstOrNull { it.isContinuous && it.priceSymbol == contract }?.symbol
+        fun continuousChart(contract: String) = catalog.instruments.firstOrNull { it.isContinuous && (it.executionSymbol ?: it.quoteSymbol) == contract }?.symbol
         fun showContract(contract: String) {
             if (contract != executionSymbol) showSymbol(continuousChart(contract) ?: contract)
         }
@@ -1176,7 +1176,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     } else {
                     val shownTimeframe = parked?.timeframe ?: timeframe
                     val shownExecution = shownInstrument.executionSymbol
-                    val shownQuote = if (active) quote else market.quotes[shownExecution]
+                    val shownQuote = if (active) quote else market.quotes[shownInstrument.priceSymbol]
                     val regularSession = chartPreferences.sessionForChart(chartId) == ChartSession.REGULAR
                     val sourceTimeframe = chartSessionSource(shownInstrument.symbol, shownTimeframe, regularSession)
                     val rawCandles = remember(plugin, shownInstrument.symbol, sourceTimeframe, market.revision) { plugin.history(shownInstrument.symbol, sourceTimeframe) }

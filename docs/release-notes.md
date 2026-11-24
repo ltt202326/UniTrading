@@ -2,7 +2,7 @@
 
 ## 简体中文
 
-- Tradovate 非股指连续合约的当前 K 线与已确认的报价／交易主力保持一致；较早数据使用券商连续历史，并提示其拼接／复权规则未确认。CL 与 MCL 使用相同的主力成交量判断。
+- Tradovate 非股指连续合约的 K 线和买卖报价使用券商连续行情；下单月份由券商报价标识核对，无法确认或与实际月份报价不一致时暂停下单。
 
 - 修复回放 K 线倒计时和成交后残留的订单草稿；支持收起回放侧栏、在图表上提交和修改订单数量，并移除模拟持仓卡片。
 
@@ -24,7 +24,7 @@
 
 ## English
 
-- Align current Tradovate non-equity-index continuous candles with the confirmed quote and trading contract. Earlier bars use broker continuous history with the stitching/adjustment rule unverified; CL and MCL use the same volume-based leader selection.
+- Use Tradovate continuous candles and quotes for non-equity-index futures. Verify the executable month from the broker's quote identity; pause orders when it cannot be confirmed or the dated quote diverges.
 
 - Fix the replay candle countdown and stale order drafts after fills; make the replay sidebar collapsible, enable chart order submission and quantity editing, and remove the simulated-position card.
 

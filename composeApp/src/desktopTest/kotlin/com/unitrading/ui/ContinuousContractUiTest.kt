@@ -19,8 +19,7 @@ class ContinuousContractUiTest {
     @Test fun chartUsesContinuousSymbolWhileConfirmationPinsDatedTargetAndRolloverClearsIt() {
         val demo = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).registry.plugins.first()
         val dated = demo.instruments.first()
-        val alias = dated.copy(symbol = "@TEST", isContinuous = true, tradeSymbol = dated.symbol,
-            continuousHistoryNotice = "较早历史如有则来自券商连续数据；拼接／复权规则未确认")
+        val alias = dated.copy(symbol = "@TEST", isContinuous = true, tradeSymbol = dated.symbol, quoteStreamSymbol = "@TEST")
         val changes = MutableStateFlow(BrokerCatalog(listOf(alias) + demo.instruments, demo.accounts))
         var chartSymbol: String? = null
         var previewed: OrderRequest? = null
@@ -28,6 +27,8 @@ class ContinuousContractUiTest {
         val plugin = object : BrokerPlugin by demo {
             override val catalog = changes
             override val instruments get() = changes.value.instruments
+            override val market = MutableStateFlow(demo.market.value.copy(quotes = demo.market.value.quotes +
+                ("@TEST" to (demo.market.value.quotes[dated.symbol] ?: Quote(1_100_000, 1_100_100, 1_798_589_000_000L)))))
             override fun history(symbol: String, timeframe: Timeframe): List<Candle> {
                 chartSymbol = symbol
                 return demo.history(dated.symbol, timeframe)
@@ -45,8 +46,7 @@ class ContinuousContractUiTest {
         }
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("continuous-route").assertTextContains("当前 K 线 / 下单 / 报价 ${dated.symbol}", substring = true)
-        compose.onNodeWithTag("continuous-route").assertTextContains("拼接／复权规则未确认", substring = true)
+        compose.onNodeWithTag("continuous-route").assertTextContains("连续图表 / 报价 @TEST · 下单 ${dated.symbol}", substring = true)
         compose.runOnIdle {
             assertEquals("@TEST", chartSymbol)
             assertEquals(dated.symbol, previewed?.symbol)

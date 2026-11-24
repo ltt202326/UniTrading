@@ -167,10 +167,10 @@ internal fun MarketWatch(
                 items(symbols, key = { it }) { symbol ->
                     val instrument = catalog.instruments.firstOrNull { it.symbol == symbol }
                     if (instrument != null) {
-                        // An unconfirmed continuous row keeps its last confirmed contract's prices; orders still wait.
+                        // Quote display and position/order activity may use different symbol identities.
                         key(plugin, instrument.priceSymbol, account.accountId) {
                             MarketQuoteRow(instrument, market.quotes[instrument.priceSymbol],
-                                activity[instrument.priceSymbol] ?: MarketActivity(), symbol == selected,
+                                activity[instrument.executionSymbol ?: instrument.quoteSymbol] ?: MarketActivity(), symbol == selected,
                                 connected = market.connected, onClick = { onSymbol(symbol) })
                         }
                     } else Text("$symbol · 等待合约加载", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = colors.Muted, style = type.bodySmall)

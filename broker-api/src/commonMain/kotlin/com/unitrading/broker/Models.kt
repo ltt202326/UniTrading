@@ -84,13 +84,13 @@ data class Instrument(
     val tradeSymbolStatus: String? = null,
     /** Last volume-confirmed dated contract, kept for Bid/Ask display while unconfirmed; never an order symbol. */
     val quoteSymbol: String? = null,
-    /** Non-null when the broker combines the confirmed dated contract with earlier continuous history. */
-    val continuousHistoryNotice: String? = null,
+    /** Explicit chart/watch-list quote stream when it differs from the executable contract. */
+    val quoteStreamSymbol: String? = null,
 ) {
     val executionSymbol: String? get() = if (isContinuous) tradeSymbol else symbol
     val executionLabel: String get() = executionSymbol ?: tradeSymbolStatus ?: "主力待确认"
-    /** Contract whose quotes a watch list shows; equals [executionSymbol] whenever the mapping is confirmed. */
-    val priceSymbol: String? get() = executionSymbol ?: quoteSymbol?.takeIf { isContinuous }
+    /** Quote stream used by the chart and watch list; execution can require a dated contract. */
+    val priceSymbol: String? get() = if (isContinuous) quoteStreamSymbol ?: executionSymbol ?: quoteSymbol else symbol
     fun formatPrice(price: Long): String {
         val full = formatFixed(price, priceDecimals)
         if (displayPriceDecimals >= priceDecimals) return full
