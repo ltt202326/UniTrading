@@ -16,7 +16,7 @@ class ReplayFailureUiTest {
         minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
     private val bars = listOf(Candle(1_700_000_000_000, 100_000, 100_025, 99_975, 100_000),
         Candle(1_700_000_060_000, 100_000, 100_075, 99_975, 100_050),
-        Candle(1_700_000_120_000, 50_000, 50_025, 49_975, 50_000))
+        Candle(1_700_000_120_000, 100_050, 100_075, 50_000, 100_050))
 
     private fun prepare(records: ReplayRecords) {
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(spec, Timeframe.M1, false, ChartTimeZone.SHANGHAI,

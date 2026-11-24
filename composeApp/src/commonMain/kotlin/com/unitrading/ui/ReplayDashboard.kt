@@ -29,8 +29,10 @@ private val ReplayRed = Color(0xFFE96760)
 
 /** A replay report never uses the connected brokerage account. */
 @Composable
-internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier) {
+internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier, onDescriptionChange: (String) -> Unit = {}) {
     val zone = remember { TimeZone.of("America/Chicago") }
+    var editingDescription by remember(record.id) { mutableStateOf(false) }
+    var descriptionDraft by remember(record.id) { mutableStateOf(record.description) }
     val ordered = remember(record.trades) { record.trades.sortedBy { it.closedAtMs } }
     val stats = remember(ordered) { tradeStatistics(ordered) }
     fun date(ms: Long) = Instant.fromEpochMilliseconds(ms).toLocalDateTime(zone).date
@@ -66,6 +68,21 @@ internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier
                         Text("账户净值 · ${record.currency}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(money(balance), style = MaterialTheme.typography.headlineSmall)
                     }
+                }
+            }
+        }
+        item {
+            Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("回放备注", style = MaterialTheme.typography.titleMedium)
+                        TextButton(onClick = {
+                            if (editingDescription) onDescriptionChange(descriptionDraft)
+                            editingDescription = !editingDescription
+                        }, modifier = Modifier.testTag("replay-description-edit")) { Text(if (editingDescription) "保存" else "编辑") }
+                    }
+                    if (editingDescription) OutlinedTextField(descriptionDraft, { descriptionDraft = it }, Modifier.fillMaxWidth().testTag("replay-description"), label = { Text("策略或复盘备注") })
+                    else Text(record.description.ifBlank { "暂无备注" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

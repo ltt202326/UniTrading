@@ -122,6 +122,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var startCalendar by remember { mutableStateOf(false) }
     var recordId by remember { mutableStateOf("${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}") }
     var report by remember { mutableStateOf<ReplayRecord?>(null) }
+    var description by remember { mutableStateOf("") }
     var savedRecords by remember { mutableStateOf<List<ReplayRecord>>(emptyList()) }
     var recordsExpanded by remember { mutableStateOf(false) }
     var orderKind by remember { mutableStateOf(OrderKind.MARKET) }
@@ -208,9 +209,18 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         val balance = checkedAdd(riskConfig.initialMicros, realized)
         val equity = checkedAdd(balance, floating)
         risk = risk.observe(riskConfig, bar.timeMs, balance, equity)
+        // When a position remains open, the candle's adverse extreme may have crossed
+        // the loss line even when the close recovered. OHLC cannot establish the path.
+        val worstFloating = next.positions.fold(0L) { n, p ->
+            val adverse = if (p.side == Side.BUY) bar.low else bar.high
+            checkedAdd(n, checkedAdd(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, adverse),
+                -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths))))
+        }
+        val worstEquity = checkedAdd(balance, worstFloating)
+        if (next.index > state.index && next.positions.isNotEmpty() && worstEquity <= risk.threshold) risk = risk.copy(failed = true)
         val tradeChanged = next.trades.size != state.trades.size
         if (equityPoints.isEmpty() || tradeChanged || bar.timeMs - equityPoints.last().timeMs >= 900_000L || risk.failed) {
-            val point = ReplayEquityPoint(bar.timeMs, equity)
+            val point = ReplayEquityPoint(bar.timeMs, if (risk.failed && next.index > state.index) minOf(equity, worstEquity) else equity)
             if (equityPoints.lastOrNull()?.timeMs == bar.timeMs) equityPoints[equityPoints.lastIndex] = point else equityPoints.add(point)
             if (equityPoints.size > 5_000) equityPoints.removeAt(0)
         }
@@ -338,26 +348,27 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             p.openedAtMs, trade.exitTimeMs, trade.pnlMicros, trade.reason)
     } }
     fun currentRecord(status: String = if (risk.failed) "失败" else "进行中"): ReplayRecord {
-        val equity = runCatching {
+        val closeEquity = runCatching {
             val realized = state.trades.fold(0L) { n, t -> checkedAdd(n, t.pnlMicros) }
             val floating = state.positions.fold(0L) { n, p -> checkedAdd(n, checkedAdd(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, current.close),
                 -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths)))) }
             checkedAdd(riskConfig.initialMicros, checkedAdd(realized, floating))
         }.getOrNull()
+        val equity = if (risk.failed) equityPoints.lastOrNull()?.equityMicros ?: closeEquity else closeEquity
         val points = equityPoints.toList().let { samples ->
             if (equity == null) samples else samples.filterNot { it.timeMs == current.timeMs } + ReplayEquityPoint(current.timeMs, equity)
         }
         return ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
-            Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, equity, points, spec.priceDecimals)
+            Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, equity, points, spec.priceDecimals, description)
     }
     LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId) {
-        if (started && records != null) {
+        if (started && historyTrades.isNotEmpty() && records != null) {
             runCatching { records.save(currentRecord()) }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
         }
     }
     fun restartReplay() {
         playing = false; started = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig)
-        equityPoints.clear(); showFailure = false; message = null
+        equityPoints.clear(); description = ""; showFailure = false; message = null
         recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
     }
     val openExecutions = remember(state.positions) { state.positions.map { p ->
@@ -583,7 +594,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     } else {
                         val completed = state.trades.size
                         val wins = state.trades.count { it.pnlMicros > 0 }
-                        Button(onClick = { report = currentRecord() }, modifier = Modifier.fillMaxWidth().testTag("replay-current-report")) { Text("查看本次回放分析") }
+                        Button(onClick = { playing = false; report = currentRecord() }, modifier = Modifier.fillMaxWidth().testTag("replay-current-report")) { Text("查看本次回放分析") }
                         ReplaySection("本地回放记录") {
                             Button(onClick = {
                                 runCatching { records?.list().orEmpty().sortedByDescending { it.savedAtMs } }
@@ -594,7 +605,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                 if (savedRecords.isEmpty()) DropdownMenuItem(text = { Text("暂无保存的记录") }, onClick = { recordsExpanded = false })
                                 savedRecords.forEach { saved -> DropdownMenuItem(text = {
                                     Text("${saved.symbol} · ${saved.trades.size} 笔 · ${Instant.fromEpochMilliseconds(saved.savedAtMs)}")
-                                }, onClick = { report = saved; recordsExpanded = false }) }
+                                }, onClick = { playing = false; report = saved; recordsExpanded = false }) }
                             }
                         }
                         ReplaySection("交易表现") {
@@ -617,7 +628,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                 ReplayMetric("${t.reason} · ${spec.formatPrice(t.exit)}", money(t.pnlMicros, true))
                             }
                         }
-                        Text("净持仓按先开先平抵消反向订单。仅使用 K 线 OHLC；同根触及止损按保守成交。无点差和滑点；回撤仅在 K 线收盘时检查。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Text("净持仓按先开先平抵消反向订单。仅使用 K 线 OHLC；无点差和滑点。持仓未平时按不利极值检查回撤，同根 K 线的真实先后顺序无法确认。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -632,7 +643,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     if (showFailure) AlertDialog(onDismissRequest = {}, modifier = Modifier.testTag("replay-failure"),
         title = { Text("回放失败") },
         text = { Column { Text("账户净值已触及止损线，回放已停止。")
-            Text("可保存已平仓交易和净值曲线；挂单及未平仓成交不记录。", style = MaterialTheme.typography.bodySmall)
+            Text("可保存已平仓交易和净值曲线；挂单及未平仓成交不记录。K 线内先后顺序无法确认。", style = MaterialTheme.typography.bodySmall)
             message?.let { if (it.startsWith("保存失败") || it.startsWith("删除失败")) Text(it, color = MaterialTheme.colorScheme.error) }
         } },
         confirmButton = { TextButton(onClick = {
@@ -662,7 +673,13 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         Surface(Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f), shape = MaterialTheme.shapes.medium) {
             Column(Modifier.fillMaxSize()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = { report = null }) { Text("关闭") } }
-                ReplayDashboard(saved, Modifier.weight(1f).fillMaxWidth())
+                ReplayDashboard(saved, Modifier.weight(1f).fillMaxWidth()) { text ->
+                    val updated = saved.copy(description = text)
+                    runCatching { records?.save(updated) }.onSuccess {
+                        if (saved.id == recordId) description = text
+                        report = updated
+                    }.onFailure { message = "保存备注失败：${it.message ?: "请检查存储"}" }
+                }
             }
         }
     } }
