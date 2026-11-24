@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- Tradovate 非股指连续合约的当前 K 线与已确认的报价／交易主力保持一致；较早数据使用券商连续历史，并提示其拼接／复权规则未确认。CL 与 MCL 使用相同的主力成交量判断。
+
 - 修复回放 K 线倒计时和成交后残留的订单草稿；支持收起回放侧栏、在图表上提交和修改订单数量，并移除模拟持仓卡片。
 
 - 回放支持每日一致性盈利上限；触及上限自动平仓并暂停当日开仓，达到盈利目标后可保存或丢弃记录并退出。精简回放下单面板并调整标题栏。
@@ -21,6 +23,8 @@
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
 ## English
+
+- Align current Tradovate non-equity-index continuous candles with the confirmed quote and trading contract. Earlier bars use broker continuous history with the stitching/adjustment rule unverified; CL and MCL use the same volume-based leader selection.
 
 - Fix the replay candle countdown and stale order drafts after fills; make the replay sidebar collapsible, enable chart order submission and quantity editing, and remove the simulated-position card.
 

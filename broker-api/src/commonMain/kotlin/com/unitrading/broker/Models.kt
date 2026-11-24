@@ -84,6 +84,8 @@ data class Instrument(
     val tradeSymbolStatus: String? = null,
     /** Last volume-confirmed dated contract, kept for Bid/Ask display while unconfirmed; never an order symbol. */
     val quoteSymbol: String? = null,
+    /** Non-null when the broker combines the confirmed dated contract with earlier continuous history. */
+    val continuousHistoryNotice: String? = null,
 ) {
     val executionSymbol: String? get() = if (isContinuous) tradeSymbol else symbol
     val executionLabel: String get() = executionSymbol ?: tradeSymbolStatus ?: "主力待确认"

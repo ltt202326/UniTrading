@@ -1,6 +1,7 @@
 package com.unitrading.tradovate
 
 import com.unitrading.broker.checkedAdd
+import com.unitrading.broker.Candle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -19,6 +20,28 @@ internal data class CompletedSession(
     val refreshCompletedVolume: Boolean = false,
 )
 internal data class VolumeLeader(val contract: JsonObject, val maturity: JsonObject, val session: CompletedSession, val volume: Long)
+
+/** Preserve the existing index charts; all other futures use their confirmed dated contract in the overlapping range. */
+// CME/CBOT stock-index product codes, including E-nano and sector contracts. Other
+// products (including equity-volatility and crypto futures) follow the leader rule.
+private val EQUITY_INDEX_ROOTS = setOf(
+    "ES", "MES", "NES", "NQ", "MNQ", "NNQ", "YM", "MYM", "NDOW", "RTY", "M2K", "N2K",
+    "EMD", "MMC", "SMC", "MSC", "SME", "NKD", "NIY", "IBV", "RS1", "RSG", "RSV", "R2G", "R2V",
+    "FT1", "FTU", "FT5", "DVE", "EI", "SPC", "MUTM", "RAYF", "STM",
+    "XAZ", "XAY", "XAP", "XAE", "XAF", "XAV", "XAI", "XAB", "XAR", "XAK", "XAU",
+    "SXB", "SXI", "SXT", "SXO", "SXR", "SOX", "NDI", "RDI", "SDI", "SDA", "RDA", "NDA",
+    "QSPX", "QNDX", "QDOW", "QRTY",
+)
+internal fun alignContinuousToLeader(symbol: String): Boolean =
+    symbol.startsWith("@") && symbol.length > 1 && symbol.drop(1).uppercase() !in EQUITY_INDEX_ROOTS
+
+/** The dated contract wins all overlap. Never fill gaps after its first bar with another contract's prices. */
+internal fun continuousWithLeader(continuous: List<Candle>, dated: List<Candle>, maxBars: Int = Int.MAX_VALUE,
+    allowContinuousOnly: Boolean = false): List<Candle> {
+    if (dated.isEmpty()) return if (allowContinuousOnly) continuous.takeLast(maxBars) else emptyList()
+    val first = dated.minOf(Candle::timeMs)
+    return mergeCandles(continuous.filter { it.timeMs < first }, dated, maxBars)
+}
 
 // Publication gaps are allowed only with fresh daily-history evidence, and never indefinitely.
 private const val MAX_CALENDAR_TAIL_AGE_MS = 72 * 60 * 60 * 1000L

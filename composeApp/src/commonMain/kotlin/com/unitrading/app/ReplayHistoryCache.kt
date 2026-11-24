@@ -3,6 +3,7 @@ package com.unitrading.app
 import com.unitrading.broker.BrokerPlugin
 import com.unitrading.broker.Candle
 import com.unitrading.broker.HistoricalRangeResult
+import com.unitrading.broker.LeaderHistory
 import com.unitrading.broker.Timeframe
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,8 @@ private const val CONTRACT_TTL = 7 * DAY_MS
 
 @Serializable
 private data class ReplayCacheEntry(val version: Int = 1, val broker: String, val symbol: String, val source: String,
-    val seconds: Int, val start: Long, val end: Long, val savedAt: Long, val candles: List<Candle>, val warning: String?)
+    val seconds: Int, val start: Long, val end: Long, val savedAt: Long, val candles: List<Candle>, val warning: String?,
+    val leaderAligned: Boolean = false, val leaderStartMs: Long? = null, val leaderSource: String? = null)
 
 internal data class ReplayLoadedHistory(val result: HistoricalRangeResult, val cacheHits: Int, val downloaded: Int)
 
@@ -72,30 +74,38 @@ internal class ReplayHistoryCache(private val store: SnapshotStore, private val 
             val slot = (id.hashCode().toLong() and 0x7fffffffL).rem(CACHE_SLOTS).toInt()
             val outcome = if (!useCache) permits.withPermit { broker.historicalRange(symbol, frame, from, until) } to false
             else slotLocks[slot].withLock {
-                val key = "replay-history-v1-$slot"
+                // Old continuous entries predate the dated-leader overlap rule and cannot be reused.
+                val version = if (symbol.startsWith("@")) 2 else 1
+                val key = "replay-history-v$version-$slot"
                 val cached = try {
                     storageLock.withLock {
                         memory[slot] ?: if (persistent) withContext(Dispatchers.Default) { store.read(key)?.let { Json.decodeFromString<ReplayCacheEntry>(it) } } else null
                     }
                 } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { null }
                 val ttl = if (symbol.startsWith("@")) CONTINUOUS_TTL else CONTRACT_TTL
-                val valid = cached != null && cached.version == 1 && cached.broker == broker.descriptor.id && cached.symbol == symbol &&
+                val valid = cached != null && cached.version == version && cached.broker == broker.descriptor.id && cached.symbol == symbol &&
                     cached.source == identity && cached.seconds == frame.seconds && cached.start == from && cached.end == until &&
+                    (cached.leaderSource == null || cached.leaderAligned && cached.leaderSource == identity) &&
+                    (cached.leaderStartMs == null || cached.leaderAligned && cached.leaderStartMs in from until until) &&
                     cached.savedAt in 0..clock && clock - cached.savedAt <= ttl && source(broker, symbol) == identity &&
                     cached.candles.size <= 50_000 && cached.candles.all { it.timeMs >= from && it.timeMs < until && it.low > 0 &&
                         it.high >= maxOf(it.open, it.close) && it.low <= minOf(it.open, it.close) && it.volume?.let { v -> v >= 0 } != false } &&
                     cached.candles.zipWithNext().all { (a, b) -> a.timeMs < b.timeMs }
-                if (valid) HistoricalRangeResult(cached!!.candles, cached.warning, cacheable = true) to true
+                if (valid) HistoricalRangeResult(cached!!.candles, cached.warning, cacheable = true,
+                    leaderHistory = if (cached.leaderAligned) LeaderHistory(cached.leaderStartMs, cached.leaderSource) else null) to true
                 else {
                     val fresh = permits.withPermit { broker.historicalRange(symbol, frame, from, until) }
                     val bars = fresh.candles.sortedBy { it.timeMs }
                     // Empty responses and incomplete provider fallbacks are never persisted.
                     if (fresh.cacheable && bars.isNotEmpty() && bars.size <= 50_000 && source(broker, symbol) == identity &&
+                        fresh.leaderHistory?.sourceSymbol.let { it == null || it == identity } &&
                         bars.all { it.timeMs >= from && it.timeMs < until && it.low > 0 && it.high >= maxOf(it.open, it.close) &&
                             it.low <= minOf(it.open, it.close) && it.volume?.let { v -> v >= 0 } != false } &&
                         bars.zipWithNext().all { (a, b) -> a.timeMs < b.timeMs }) {
-                        val entry = ReplayCacheEntry(broker = broker.descriptor.id, symbol = symbol, source = requireNotNull(identity),
-                            seconds = frame.seconds, start = from, end = until, savedAt = clock, candles = bars, warning = fresh.warning)
+                        val entry = ReplayCacheEntry(version = version, broker = broker.descriptor.id, symbol = symbol, source = requireNotNull(identity),
+                            seconds = frame.seconds, start = from, end = until, savedAt = clock, candles = bars, warning = fresh.warning,
+                            leaderAligned = fresh.leaderHistory != null, leaderStartMs = fresh.leaderHistory?.firstCandleMs,
+                            leaderSource = fresh.leaderHistory?.sourceSymbol)
                         try {
                             storageLock.withLock {
                                 memory.remove(slot); memory[slot] = entry
@@ -114,10 +124,24 @@ internal class ReplayHistoryCache(private val store: SnapshotStore, private val 
             }
             outcome
         } }.awaitAll()
-        val bars = results.flatMap { it.first.candles }.filter { it.timeMs in start until end }
+        if (symbol.startsWith("@") && identity != null) check(source(broker, symbol) == identity) { "$symbol 主力在历史读取期间变化，请重新读取" }
+        val leaders = results.mapNotNull { it.first.leaderHistory?.sourceSymbol }.distinct()
+        check(leaders.size <= 1 && (leaders.isEmpty() || source(broker, symbol) == leaders.single())) {
+            "$symbol 主力在历史读取期间变化，请重新读取"
+        }
+        // Each chunk is read separately. Once any chunk contains the dated leader, do not fill later
+        // gaps with a different continuous contract, including cached alias-only chunks.
+        val firstLeaderBar = results.mapNotNull { it.first.leaderHistory?.firstCandleMs }.minOrNull()
+        val bars = results.flatMap { (result, _) ->
+            val localLeader = result.leaderHistory
+            if (firstLeaderBar == null || localLeader == null) result.candles
+            else result.candles.filter { it.timeMs < firstLeaderBar || localLeader.firstCandleMs?.let { first -> it.timeMs >= first } == true }
+        }.filter { it.timeMs in start until end }
             .associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs)
         val warnings = results.mapNotNull { it.first.warning }.distinct()
         ReplayLoadedHistory(HistoricalRangeResult(bars, warnings.takeIf { it.isNotEmpty() }?.joinToString("；"),
-            cacheable = results.all { it.first.cacheable }), results.count { it.second }, results.count { !it.second })
+            cacheable = results.all { it.first.cacheable },
+            leaderHistory = if (results.any { it.first.leaderHistory != null }) LeaderHistory(firstLeaderBar, leaders.singleOrNull()) else null),
+            results.count { it.second }, results.count { !it.second })
     }
 }

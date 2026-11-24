@@ -21,6 +21,7 @@ android {
         testProguardFiles("test-r8-rules.pro")
         // Separate application ID for credential tests; never replace the normal installation.
         if (providers.gradleProperty("credentialStoreTest").orNull == "true") applicationIdSuffix = ".credentialtest"
+        else if (providers.gradleProperty("previewBuild").orNull == "true") applicationIdSuffix = ".preview"
     }
     // The two published APKs differ only in the browser behind the Tradovate login window.
     // Same application ID and certificate: either one installs over the other and keeps the app's data.

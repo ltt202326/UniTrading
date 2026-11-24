@@ -91,6 +91,15 @@ class ContinuousContractsTest {
                         chartRequests.add(body)
                         if (chartPenalty && body.str("p-ticket") == null) {
                             delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"p-ticket":"chart-ticket","p-time":1}}]""")
+                        } else if (body.str("symbol")?.let(::alignContinuousToLeader) == true) {
+                            // Distinct channels and different prices expose accidental alias/leader mixing.
+                            val id = ++channelId
+                            val old = kotlin.time.Instant.fromEpochMilliseconds(CONTINUOUS_TIME - 40 * 86_400_000L)
+                            val current = kotlin.time.Instant.fromEpochMilliseconds(CONTINUOUS_TIME)
+                            delegate.market.sent.add("md/getChart")
+                            delegate.market.bodies["md/getChart"] = text.substringAfter("\n\n")
+                            delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,"s":"db","bars":[{"timestamp":"$old","open":4000,"high":4000,"low":4000,"close":4000},{"timestamp":"$current","open":4400,"high":4400,"low":4400,"close":4400}],"eoh":true}]}}]""")
+                            delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"historicalId":$id,"realtimeId":$id}}]""")
                         } else {
                             if (body.str("p-ticket") == "chart-ticket") chartPenaltyRetries++
                             socket.send(text)
@@ -209,6 +218,40 @@ class ContinuousContractsTest {
     }
     private fun request() = OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MES")
 
+    @Test fun nonIndexProductsUseTheSameConfirmedDatedChartAndBrokerHistory() = runTest {
+        for (root in listOf("GC", "MGC", "SI", "SL", "SIL", "CL", "MCL", "BTC", "MBT", "HG", "NG")) {
+            val wire = Wire(root = root)
+            val broker = ready(wire)
+            val symbol = "@$root"
+            assertEquals("${root}Z6", broker.instruments.single { it.symbol == symbol }.executionSymbol, root)
+            assertTrue(wire.chartRequests.any { it.str("symbol") == "${root}Z6" }, root)
+            assertTrue(wire.chartRequests.any { it.str("symbol") == symbol }, root)
+            assertEquals(setOf("${root}Z6", "${root}H7"), wire.dailyRequests.mapNotNull { it.str("symbol") }.toSet(), root)
+            val bars = broker.history(symbol, Timeframe.M5)
+            assertEquals(4_000_000_000L, bars.first().close, "$root old alias")
+            assertEquals(5_500_250_000L, bars.last().close, "$root overlapping leader")
+            broker.disconnect()
+            runCurrent()
+        }
+    }
+
+    @Test fun datedLeaderReplacesOverlapAndNeverFillsItsGapsFromTheAlias() {
+        fun bar(time: Long, price: Long) = Candle(time, price, price, price, price)
+        val alias = listOf(bar(1, 10), bar(2, 20), bar(3, 30), bar(4, 40), bar(5, 50))
+        val leader = listOf(bar(2, 200), bar(4, 400))
+        assertEquals(listOf(bar(1, 10), bar(2, 200), bar(4, 400)), continuousWithLeader(alias, leader))
+        assertTrue(continuousWithLeader(alias, emptyList()).isEmpty())
+        assertEquals(alias, continuousWithLeader(alias, emptyList(), allowContinuousOnly = true))
+        assertEquals(listOf(bar(2, 200), bar(4, 400)), continuousWithLeader(alias, leader, maxBars = 2))
+    }
+
+    @Test fun knownStockIndexAliasesRetainTheirExistingCharts() {
+        for (root in listOf("ES", "MES", "NES", "NQ", "MNQ", "NNQ", "YM", "MYM", "NDOW", "RTY", "M2K", "RS1", "R2G", "FTU", "XAE", "SXB"))
+            assertFalse(alignContinuousToLeader("@$root"), root)
+        assertTrue(alignContinuousToLeader("@VX"))
+        assertFalse(alignContinuousToLeader("MGCZ6"))
+    }
+
     @Test fun continuousChartAndDatedExecutionUseSeparateSymbols() = runTest {
         val wire = Wire()
         val broker = ready(wire)
@@ -259,8 +302,8 @@ class ContinuousContractsTest {
         wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5500.50}}}]}}]""")
         runCurrent()
         assertTrue(wire.delegate.market.sent.count { it == "md/getChart" } > before)
-        assertEquals("MCLZ6", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
-        assertTrue(wire.chartRequests.none { it.str("symbol") == "@MCL" })
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "MCLZ6" })
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
         assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
     }
@@ -289,7 +332,7 @@ class ContinuousContractsTest {
         runCurrent()
         assertEquals("MCLH7", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
         assertTrue(wire.chartRequests.any { it.str("symbol") == "MCLH7" })
-        assertTrue(wire.chartRequests.none { it.str("symbol") == "@MCL" })
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
     }
 
