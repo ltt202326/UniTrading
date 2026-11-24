@@ -355,7 +355,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             checkedAdd(riskConfig.initialMicros, checkedAdd(realized, floating))
         }.getOrNull()
         val equity = if (risk.failed) equityPoints.lastOrNull()?.equityMicros ?: closeEquity else closeEquity
-        val points = equityPoints.toList().let { samples ->
+        val points = (listOf(ReplayEquityPoint(bars[start].timeMs, riskConfig.initialMicros)) + equityPoints.toList()).let { samples ->
             if (equity == null) samples else samples.filterNot { it.timeMs == current.timeMs } + ReplayEquityPoint(current.timeMs, equity)
         }
         return ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
@@ -370,6 +370,11 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         playing = false; started = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig)
         equityPoints.clear(); description = ""; showFailure = false; message = null
         recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
+    }
+    fun finishReplay(after: () -> Unit) {
+        if (records == null || historyTrades.isEmpty()) { after(); return }
+        runCatching { records.save(currentRecord("已结束")) }.onSuccess { after() }
+            .onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
     }
     val openExecutions = remember(state.positions) { state.positions.map { p ->
         Execution("replay-execution-${p.id}", p.symbol, p.side, p.lotsHundredths, p.entryPrice, p.openedAtMs, p.id)
@@ -695,15 +700,15 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         dismissButton = { TextButton(onClick = { orderToConfirm = null }) { Text("取消") } }) }
     switchTo?.let { symbol -> AlertDialog(onDismissRequest = { switchTo = null }, title = { Text("切换回放品种？") },
         text = { Text("切换品种会结束当前回放，模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") },
-        confirmButton = { TextButton(onClick = { switchTo = null; changeSymbol(symbol) }) { Text("切换品种") } },
+        confirmButton = { TextButton(onClick = { finishReplay { switchTo = null; changeSymbol(symbol) } }) { Text("切换品种") } },
         dismissButton = { TextButton(onClick = { switchTo = null }) { Text("取消") } }) }
     if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false }, title = { Text("结束本次回放？") },
         text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
-            TextButton(onClick = { confirmReset = false; restartReplay() }) { Text("重选起点") }
+            TextButton(onClick = { finishReplay { confirmReset = false; restartReplay() } }) { Text("重选起点") }
         }, dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("取消") } })
     if (confirmExit) AlertDialog(onDismissRequest = { confirmExit = false }, title = { Text("关闭回放？") },
         text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭回放") }
+            TextButton(onClick = { finishReplay(onDismiss) }) { Text("关闭回放") }
         }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("取消") } })
     if (showAccount) AlertDialog(onDismissRequest = { showAccount = false; drawdownMode = riskConfig.mode; allowOvernight = riskConfig.allowOvernight; cutoffText = replayCutoffText(riskConfig.overnightCutoffMinutes) }, title = { Text("模拟账户设置") }, text = {
         Column(Modifier.widthIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -36,6 +36,7 @@ internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier
     val ordered = remember(record.trades) { record.trades.sortedBy { it.closedAtMs } }
     val stats = remember(ordered) { tradeStatistics(ordered) }
     fun date(ms: Long) = Instant.fromEpochMilliseconds(ms).toLocalDateTime(zone).date
+    fun dateTime(ms: Long) = Instant.fromEpochMilliseconds(ms).toLocalDateTime(zone).toString().replace('T', ' ').take(19)
     val dated = remember(ordered) { ordered.map { date(it.closedAtMs) to (it.netPnlMicros ?: 0L) } }
     val monthGroups = remember(dated) { dated.groupBy { it.first.toString().take(7) }.toList().sortedBy { it.first }.toMap() }
     val dayGroups = remember(dated) { dated.groupBy { it.first } }
@@ -124,7 +125,7 @@ internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier
                         Text("${trade.symbol} · ${if (trade.side == Side.BUY) "多" else "空"} · ${formatFixed(trade.lotsHundredths, 2)}", fontWeight = FontWeight.Medium)
                         val entry = record.priceDecimals?.let { formatFixed(trade.entryPrice, it) } ?: "—"
                         val exit = record.priceDecimals?.let { formatFixed(trade.exitPrice, it) } ?: "—"
-                        Text("${date(trade.closedAtMs)} · $entry → $exit · ${trade.reason}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("平仓 ${dateTime(trade.closedAtMs)} · $entry → $exit · ${trade.reason}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(trade.netPnlMicros?.let { money(it, true) } ?: "—", color = if ((trade.netPnlMicros ?: 0) >= 0) ReplayGreen else ReplayRed)
                 }
