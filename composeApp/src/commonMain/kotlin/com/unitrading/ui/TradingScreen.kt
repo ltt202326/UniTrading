@@ -1293,6 +1293,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
                             showWatermark = desktopStyle && chartPreferences.showChartWatermark,
                             chartTimeZone = chartPreferences.chartTimeZone, sessionNotice = sessionResult.second,
+                            continuousCurrentContract = plugin.descriptor.id.startsWith("tradovate-"),
                             chartTimeZoneLabel = chartPreferences.chartTimeZone.labelAt(if (market.connected) market.quotes.values.maxOfOrNull { it.timeMs } else null),
                             regularSession = regularSession && shownTimeframe.seconds < Timeframe.DAY && sessionResult.second == null,
                             onOpenSettings = { showActivity = false; showSettings = true },

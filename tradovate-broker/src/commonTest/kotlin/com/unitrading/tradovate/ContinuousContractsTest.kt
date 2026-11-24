@@ -209,11 +209,11 @@ class ContinuousContractsTest {
     }
     private fun request() = OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MES")
 
-    @Test fun continuousChartAndDatedExecutionUseSeparateSymbols() = runTest {
+    @Test fun continuousChartAndExecutionUseSameDatedSymbol() = runTest {
         val wire = Wire()
         val broker = ready(wire)
         assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
-        assertEquals("@MES", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
+        assertEquals("MESZ6", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
         assertEquals("MESZ6", json(wire.delegate.market.bodies.getValue("md/subscribequote")).str("symbol"))
         assertEquals(1, broker.history("@MES", Timeframe.M5).size)
         assertTrue(broker.history("MESZ6", Timeframe.M5).isEmpty())
@@ -223,6 +223,31 @@ class ContinuousContractsTest {
         assertTrue(session.preview(request()).valid)
         assertTrue(session.placeOrder("continuous", request()).accepted)
         assertEquals("MESZ6", wire.delegate.requests.single { it.path == "order/placeorder" }.body?.str("symbol"))
+    }
+
+    @Test fun supportedRootsUseVerifiedDatedChartAtIntradayAndDailyIntervals() = runTest {
+        // No product-specific branch is allowed: exchange metadata supplies the actual root and leader.
+        for (root in listOf("MES", "ES", "MNQ", "NQ", "MGC", "GC", "MCL", "CL", "MYM", "YM", "M2K", "RTY", "SI", "SIL", "HG", "NG", "ZB", "ZN", "6E", "M6E")) {
+            val wire = Wire(root = root)
+            val broker = ready(wire)
+            assertEquals("${root}Z6", broker.instruments.single { it.symbol == "@$root" }.executionSymbol, root)
+            assertTrue(wire.chartRequests.isNotEmpty(), root)
+            assertTrue(wire.chartRequests.all { it.str("symbol") == "${root}Z6" }, root)
+            val continuousBars = broker.history("@$root", Timeframe.M5)
+            assertTrue(continuousBars.isNotEmpty(), root)
+            broker.watch("${root}Z6", Timeframe.M5)
+            runCurrent()
+            assertEquals(continuousBars, broker.history("${root}Z6", Timeframe.M5), root)
+            broker.watch("@$root", Timeframe.H1)
+            runCurrent()
+            assertEquals("${root}Z6", wire.chartRequests.last().str("symbol"), root)
+            broker.watch("@$root", Timeframe.D1)
+            runCurrent()
+            assertEquals("${root}Z6", wire.chartRequests.last().str("symbol"), root)
+            assertTrue(wire.chartRequests.none { it.str("symbol") == "@$root" }, root)
+            broker.disconnect()
+            runCurrent()
+        }
     }
 
     @Test fun stalledContinuousChartRecoversOnFreshTradeWithoutSynthesizingCandles() = runTest {
@@ -240,7 +265,7 @@ class ContinuousContractsTest {
         runCurrent()
         assertTrue(wire.delegate.market.sent.count { it == "md/getChart" } > requests)
         assertEquals(original, broker.history("@MES", Timeframe.M5), "Trade ticks must never be inserted into continuous history")
-        assertEquals("@MES", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
+        assertEquals("MESZ6", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
         val afterRetry = wire.delegate.market.sent.count { it == "md/getChart" }
         wire.clock += 31_000
         val again = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
@@ -330,7 +355,7 @@ class ContinuousContractsTest {
         broker.watch("@MES", Timeframe.ofMinutes(1440))
         runCurrent()
         val chart = json(wire.delegate.market.bodies.getValue("md/getChart"))
-        assertEquals("@MES", chart.str("symbol"))
+        assertEquals("MESZ6", chart.str("symbol"))
         assertEquals("DailyBar", chart["chartDescription"]!!.jsonObject.str("underlyingType"))
         assertEquals(1L, chart["chartDescription"]!!.jsonObject.long("elementSize"))
         assertEquals(volumeRequests, wire.dailyRequests.size)
@@ -363,12 +388,12 @@ class ContinuousContractsTest {
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
     }
 
-    @Test fun missingMappingKeepsContinuousHistoryButBlocksOrders() = runTest {
+    @Test fun missingMappingHidesContinuousHistoryAndBlocksOrders() = runTest {
         val wire = Wire().apply { failMapping = true }
         val broker = ready(wire)
         assertNull(broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
         assertEquals("主力无法确认：offline", broker.instruments.single { it.symbol == "@MES" }.executionLabel)
-        assertEquals(1, broker.history("@MES", Timeframe.M5).size)
+        assertTrue(broker.history("@MES", Timeframe.M5).isEmpty())
         assertFalse(broker.openSession("100").placeOrder("unresolved", request()).accepted)
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
     }
