@@ -23,7 +23,7 @@ jobs:
       - name: Verify Tradovate, Rithmic, and proxy routing
         run: |
           ./gradlew :tradovate-broker:desktopTest :rithmic-broker:desktopTest --no-daemon
-          ./gradlew :composeApp:desktopTest --tests 'com.unitrading.SystemProxyTest.brokerRequestsAndReconnectsFollowTheJvmProxySelector' --no-daemon
+          ./gradlew :composeApp:desktopTest --tests 'com.unitrading.SystemProxyTest.brokerRequestsAndReconnectsFollowTheJvmProxySelector' --tests 'com.unitrading.SystemProxyTest.brokerWebSocketCanUseExplicitSocksProxy' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -49,7 +49,7 @@ jobs:
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - name: Compile, exercise proxy routing, and package Windows app
-        run: ./gradlew.bat :composeApp:desktopTest --tests '*brokerRequestsAndReconnectsFollowTheJvmProxySelector' :composeApp:createDistributable --no-daemon
+        run: ./gradlew.bat :composeApp:desktopTest --tests '*brokerRequestsAndReconnectsFollowTheJvmProxySelector' --tests '*brokerWebSocketCanUseExplicitSocksProxy' :composeApp:createDistributable --no-daemon
       - name: Verify packaged JVM proxy flag
         shell: pwsh
         run: |
@@ -79,3 +79,20 @@ jobs:
           name: System-Proxy-Windows-Results
           path: composeApp/build/test-results/desktopTest/*.xml
           if-no-files-found: warn
+  ios-compile:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Compile broker modules for iOS
+        run: ./gradlew :broker-api:compileKotlinIosArm64 :tradovate-broker:compileKotlinIosArm64 :rithmic-broker:compileKotlinIosArm64 --no-daemon
