@@ -92,6 +92,7 @@ class TradovateBroker(
     private val latestContinuousPrice = mutableMapOf<String, Pair<Long, Long>>()
     private val latestContinuousBarTime = mutableMapOf<String, Long>()
     private val latestContinuousWasLive = mutableSetOf<String>()
+    private val latestDatedTrade = mutableMapOf<String, Pair<Long, Long>>()
     private val realTimeQuoteSymbols = mutableSetOf<String>()
     private val continuousResolutionSlots = Semaphore(2)
     // Independent price-based products progress concurrently; global REST pacing still applies.
@@ -436,7 +437,7 @@ class TradovateBroker(
         // Web sessions use their account token on the selected market-data gateway too.
         val token = credentials.accessToken
         lock.withLock {
-            quoteSides.clear(); quotes = emptyMap(); latestContinuousPrice.clear(); latestContinuousBarTime.clear(); latestContinuousWasLive.clear(); realTimeQuoteSymbols.clear()
+            quoteSides.clear(); quotes = emptyMap(); latestContinuousPrice.clear(); latestContinuousBarTime.clear(); latestContinuousWasLive.clear(); latestDatedTrade.clear(); realTimeQuoteSymbols.clear()
             // Keep successful one-shot bindings across reconnects; only unfinished matches need new evidence.
             for (symbol in priceMatchCandidates.keys.toList()) if (continuousRoutes[symbol]?.spec?.tradeSymbol == null) {
                 priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol); priceMatchReady.remove(symbol)
@@ -661,7 +662,7 @@ class TradovateBroker(
     }
 
     /** Discover every listed, unexpired same-product month; incomplete discovery cannot enable orders. */
-    private suspend fun resolvePriceCandidates(symbol: String) {
+    private suspend fun resolvePriceCandidates(symbol: String, force: Boolean) {
         val socket = marketSocket ?: return
         val route = continuousRoutes[symbol] ?: return
         lock.withLock {
@@ -700,11 +701,19 @@ class TradovateBroker(
                 priceMatchExpirations[symbol] = contracts.associate { it.str("name")!! to expiryById.getValue(it.long("contractMaturityId")!!) }
                 priceMatchers[symbol] = ContinuousPriceMatcher().also { matcher ->
                     latestContinuousPrice[symbol]?.takeIf { now() - it.second in 0..15_000 }?.let { matcher.chart(it.first, it.second) }
+                    if (!force) names.forEach { name -> latestDatedTrade[name]?.takeIf { now() - it.second in 0..15_000 }?.let { matcher.trade(name, it.first, it.second) } }
                 }
             }
             // A different product may have a refused subscription; only this product's
             // own incomplete candidates prevent its matching from starting.
-            try { chartWatchLock.withLock { check(marketSocket === socket && marketReady); syncQuoteSubscriptions(socket) } }
+            try { chartWatchLock.withLock {
+                check(marketSocket === socket && marketReady)
+                if (force) for (name in names) if (name in subscribedQuotes) {
+                    socket.request("md/unsubscribequote", buildJsonObject { put("symbol", name) })
+                    lock.withLock { subscribedQuotes.remove(name); realTimeQuoteSymbols.remove(name) }
+                }
+                syncQuoteSubscriptions(socket)
+            } }
             catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { /* Checked against this product's names below. */ }
             lock.withLock {
@@ -758,7 +767,7 @@ class TradovateBroker(
     /** Only callers for the same symbol wait on each other; daily chart capacity is shared globally. */
     private suspend fun resolveContinuous(symbol: String, force: Boolean) {
         if (!needsContinuousCheck(symbol, force)) return
-        if (usesContinuousPriceMatching(symbol)) { resolvePriceCandidates(symbol); return }
+        if (usesContinuousPriceMatching(symbol)) { resolvePriceCandidates(symbol, force); return }
         val resolutionSocket = marketSocket ?: return
         val route = continuousRoutes[symbol] ?: return
         // The last confirmed contract keeps its quotes on screen; orders still wait for this check.
@@ -1633,6 +1642,7 @@ class TradovateBroker(
                 if (previous != null && previous.time > time) continue
                 if (listOfNotNull(incomingBid, incomingAsk).any { it <= 0 || it % spec.tickSize != 0L }) continue
                 if (incomingTrade != null && now() - time in -5_000..5_000) {
+                    latestDatedTrade[spec.symbol] = incomingTrade to now()
                     priceMatchCandidates.filter { (alias, names) -> spec.symbol in names && continuousRoutes[alias]?.spec?.tradeSymbol == null }.keys.forEach { alias ->
                         priceMatchers[alias]?.trade(spec.symbol, incomingTrade, now())
                         updatePriceRoute(alias)

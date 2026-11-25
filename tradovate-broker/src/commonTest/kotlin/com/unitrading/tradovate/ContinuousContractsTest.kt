@@ -277,6 +277,8 @@ class ContinuousContractsTest {
         wire.clock += 1000
         var at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
         wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":13,"s":"s","bars":[{"timestamp":"$at","open":5500,"high":5501,"low":5499,"close":5500.50}]}]}}]""")
+        // A historical packet arriving later must not replace the already observed live price.
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":12,"s":"db","bars":[{"timestamp":"$at","open":5500,"high":5501,"low":5499,"close":5499.50}]}]}}]""")
         wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5499.50},"Bid":{"price":5499.50},"Offer":{"price":5499.75}}},{"contractId":201,"timestamp":"$at","entries":{"Trade":{"price":5500.50},"Bid":{"price":5500.50},"Offer":{"price":5500.75}}}]}}]""")
         runCurrent()
         assertEquals("MCLH7", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
@@ -291,8 +293,10 @@ class ContinuousContractsTest {
         runCurrent()
         assertEquals("MCLH7", broker.instruments.single { it.symbol == "@MCL" }.priceSymbol)
         assertTrue(session.preview(matched).valid, "Fresh Bid/Ask must remain usable without rematching")
+        val beforeRefresh = wire.quoteSubscriptions.count { it == "MCLH7" }
         broker.refreshContinuousQuotes(setOf("@MCL"))
         advanceTimeBy(5_000); runCurrent()
+        assertTrue(wire.quoteSubscriptions.count { it == "MCLH7" } > beforeRefresh, "Refresh must request a new snapshot")
         assertNull(broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
         wire.clock += 1000
         at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
