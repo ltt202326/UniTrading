@@ -23,7 +23,7 @@ jobs:
       - name: Verify Tradovate, Rithmic, and proxy routing
         run: |
           ./gradlew :tradovate-broker:desktopTest :rithmic-broker:desktopTest --no-daemon
-          ./gradlew :composeApp:desktopTest --tests 'com.unitrading.SystemProxyTest.brokerRequestsAndReconnectsFollowTheJvmProxySelector' --tests 'com.unitrading.SystemProxyTest.brokerWebSocketCanUseExplicitSocksProxy' --no-daemon
+          ./gradlew :composeApp:desktopTest --tests 'com.unitrading.SystemProxyTest.brokerRequestsAndReconnectsFollowTheJvmProxySelector' --tests 'com.unitrading.SystemProxyTest.brokerWebSocketCanUseExplicitSocksProxy' --tests 'com.unitrading.SystemProxyTest.tradingPostIsNotAutomaticallyReplayed' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -49,7 +49,7 @@ jobs:
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - name: Compile, exercise proxy routing, and package Windows app
-        run: ./gradlew.bat :composeApp:desktopTest --tests '*brokerRequestsAndReconnectsFollowTheJvmProxySelector' --tests '*brokerWebSocketCanUseExplicitSocksProxy' :composeApp:createDistributable --no-daemon
+        run: ./gradlew.bat :composeApp:desktopTest --tests '*brokerRequestsAndReconnectsFollowTheJvmProxySelector' --tests '*brokerWebSocketCanUseExplicitSocksProxy' --tests '*tradingPostIsNotAutomaticallyReplayed' :composeApp:createDistributable --no-daemon
       - name: Verify packaged JVM proxy flag
         shell: pwsh
         run: |
