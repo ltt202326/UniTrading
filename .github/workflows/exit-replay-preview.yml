@@ -1,13 +1,13 @@
-name: Chart zoom and settings preview
+name: Pine merge diagnostic
 on:
   push:
     branches: ['build/exit-save-replay-delete-20261125']
 permissions:
   contents: read
 jobs:
-  tests:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
@@ -20,120 +20,18 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - name: Verify chart zoom, replay and settings
-        run: >-
-          xvfb-run -a -s '-screen 0 1920x1080x24' ./gradlew :composeApp:desktopTest
-          --tests '*DesktopExitTest*'
-          --tests '*DesktopWorkspaceSessionStoreTest*'
-          --tests '*TradingPreferencesTest*'
-          --tests '*ReplayRecordsTest*'
-          --tests '*ReplayRiskTest*'
-          --tests '*ReplayProfitTest*'
-          --tests '*ReplaySoftStopTest*'
-          --tests '*PineChartUiTest*'
-          --tests '*PineIndicatorSettingsUiTest*'
-          --tests '*ChartPineTest*'
-          --tests '*PineChartDrawingTest*'
-          --tests '*PineParserTest*'
-          --tests '*PineRuntimeTest*'
-          --tests '*ChartTemplatesTest*'
-          --tests '*ChartObjectLayersTest*'
-          --tests '*HistoricalReplayTest*'
-          --tests '*ReplayDailyRiskTest*'
-          --tests '*ReplaySetupUiTest*'
-          --tests '*ChartGeometryTest*'
-          --tests '*ChartViewMemoryTest*'
-          --tests '*DrawingGeometryTest*'
-          --tests '*CandleZoomUiTest*'
-          --tests '*SettingsPageTest*'
-          --tests '*ReplayRecordDeleteUiTest*'
-          --tests '*ReplayDailyLossUiTest*'
-          --tests '*ReplayConsistencyUiTest*'
-          --tests '*HistoricalReplayUiTest*'
-          --no-daemon
-      - name: Verify Tradovate history and cache migration
-        if: ${{ always() }}
-        run: >-
-          ./gradlew :tradovate-broker:desktopTest
-          --tests '*CandleCacheTest*'
-          --tests '*IncrementalChartTest*'
-          --tests '*HistoryPreloadTest*'
-          --tests '*ChartHistoryDepthTest*'
-          --no-daemon
-      - name: Verify Rithmic chart history and cache migration
-        if: ${{ always() }}
-        run: ./gradlew :rithmic-broker:desktopTest --tests '*RithmicBrokerTest*' --no-daemon
+      - name: Check Pine rendering
+        run: xvfb-run -a -s '-screen 0 1920x1080x24' ./gradlew :composeApp:desktopTest --tests '*PineChartUiTest*' --no-daemon
+      - name: Collect screenshot
+        if: always()
+        run: |
+          mkdir -p diagnostic
+          find .. -name chart-pine.png -type f -exec cp {} diagnostic/ \;
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: Chart-Zoom-Test-Results
+          name: Pine-Diagnostic
           path: |
+            diagnostic/chart-pine.png
             composeApp/build/test-results/desktopTest/*.xml
-            tradovate-broker/build/test-results/desktopTest/*.xml
-            rithmic-broker/build/test-results/desktopTest/*.xml
           if-no-files-found: warn
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: Chart-Zoom-Screenshot
-          path: composeApp/build/zoom-2400/chart.png
-          if-no-files-found: warn
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-        with:
-          packages: platform-tools
-          log-accepted-android-sdk-licenses: false
-      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
-      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - name: Package Windows application
-        run: ./gradlew.bat :composeApp:createDistributable --no-daemon
-      - name: Archive Windows application
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $app = 'composeApp/build/compose/binaries/main/app/UniTrading'
-          if (-not (Test-Path "$app/UniTrading.exe")) { throw 'Windows executable missing' }
-          if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host missing' }
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-Chart-2400-Windows-x64.zip'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: Chart-2400-Windows-x64
-          path: dist/UniTrading-Chart-2400-Windows-x64.zip
-          compression-level: 0
-          if-no-files-found: error
-  android:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-        with:
-          packages: platform-tools
-          log-accepted-android-sdk-licenses: false
-      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
-      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - name: Build isolated Android preview
-        run: ./gradlew :androidApp:assembleStandardDebug -PcredentialStoreTest=true --no-daemon
-      - name: Verify preview application ID
-        run: |
-          apk=androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
-          aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
-          "$aapt" dump badging "$apk" | grep -F "package: name='com.unitrading.demo.credentialtest'"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: Chart-2400-Android-preview
-          path: androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
-          if-no-files-found: error
