@@ -444,6 +444,8 @@ jobs:
   notify-discord:
     name: Discord 公告
     needs: [release]
+    # v1.8.0 publishes to GitHub without separately sending a chat announcement.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref != 'refs/tags/v1.8.0'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -468,7 +470,10 @@ jobs:
       !cancelled() && github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' ||
        github.ref == 'refs/heads/master' ||
-       startsWith(github.ref, 'refs/tags/v'))
+       startsWith(github.ref, 'refs/tags/v')) &&
+      github.ref != 'refs/tags/v1.8.0' &&
+      !(github.ref == 'refs/heads/main' &&
+        startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
