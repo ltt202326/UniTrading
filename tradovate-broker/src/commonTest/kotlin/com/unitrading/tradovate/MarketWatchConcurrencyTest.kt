@@ -88,6 +88,14 @@ class MarketWatchConcurrencyTest {
                 override suspend fun send(text: String) {
                     val parts = text.split('\n')
                     when (parts.first()) {
+                        "md/subscribequote" -> if ("MGC" in roots) {
+                            // The generic fixture emits an MES quote timestamped in the future;
+                            // these products receive their own correctly timestamped ticks below.
+                            delegate.market.sent.add(parts.first())
+                            delegate.market.bodies[parts.first()] = text.substringAfter("\n\n")
+                            delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"mode":"RealTime"}}]""")
+                            return
+                        } else socket.send(text)
                         "md/getChart" -> {
                             val body = json(text.substringAfter("\n\n"))
                             val symbol = body.str("symbol")!!

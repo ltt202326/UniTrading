@@ -90,6 +90,8 @@ class TradovateBroker(
     private val priceMatchExpiry = mutableMapOf<String, Long>()
     private val priceMatchExpirations = mutableMapOf<String, Map<String, Long>>()
     private val latestContinuousPrice = mutableMapOf<String, Pair<Long, Long>>()
+    private val latestContinuousBarTime = mutableMapOf<String, Long>()
+    private val latestContinuousWasLive = mutableSetOf<String>()
     private val realTimeQuoteSymbols = mutableSetOf<String>()
     private val continuousResolutionSlots = Semaphore(2)
     // Independent price-based products progress concurrently; global REST pacing still applies.
@@ -434,7 +436,7 @@ class TradovateBroker(
         // Web sessions use their account token on the selected market-data gateway too.
         val token = credentials.accessToken
         lock.withLock {
-            quoteSides.clear(); quotes = emptyMap(); latestContinuousPrice.clear(); realTimeQuoteSymbols.clear()
+            quoteSides.clear(); quotes = emptyMap(); latestContinuousPrice.clear(); latestContinuousBarTime.clear(); latestContinuousWasLive.clear(); realTimeQuoteSymbols.clear()
             // Keep successful one-shot bindings across reconnects; only unfinished matches need new evidence.
             for (symbol in priceMatchCandidates.keys.toList()) if (continuousRoutes[symbol]?.spec?.tradeSymbol == null) {
                 priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol); priceMatchReady.remove(symbol)
@@ -550,7 +552,7 @@ class TradovateBroker(
         lock.withLock {
             for (symbol in targets) if (usesContinuousPriceMatching(symbol)) {
                 priceMatchReady.remove(symbol); priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol)
-                priceMatchExpiry.remove(symbol); priceMatchExpirations.remove(symbol); latestContinuousPrice.remove(symbol)
+                priceMatchExpiry.remove(symbol); priceMatchExpirations.remove(symbol); latestContinuousPrice.remove(symbol); latestContinuousBarTime.remove(symbol); latestContinuousWasLive.remove(symbol)
                 continuousRoutes[symbol]?.let { route -> continuousRoutes = continuousRoutes + (symbol to route.copy(
                     spec = route.spec.copy(tradeSymbol = null, quoteSymbol = null, tradeSymbolStatus = "正在更新连续合约"), checkedAt = null, validUntil = 0)) }
             }
@@ -1713,8 +1715,11 @@ class TradovateBroker(
         if (usesContinuousPriceMatching(key.first) && continuousRoutes[key.first]?.spec?.tradeSymbol == null && incoming.size == chart.array("bars").size) {
             incoming.maxByOrNull(Candle::timeMs)?.let { bar ->
                 val recentWindow = maxOf(120_000L, key.second.millis + 60_000L)
-                if (now() - bar.timeMs in -5_000..recentWindow) {
+                val newer = !historical || (key.first !in latestContinuousWasLive && bar.timeMs >= (latestContinuousBarTime[key.first] ?: 0L))
+                if (newer && now() - bar.timeMs in -5_000..recentWindow) {
                     latestContinuousPrice[key.first] = bar.close to now()
+                    latestContinuousBarTime[key.first] = bar.timeMs
+                    if (!historical) latestContinuousWasLive.add(key.first)
                     priceMatchers[key.first]?.chart(bar.close, now())
                     updatePriceRoute(key.first)
                 }

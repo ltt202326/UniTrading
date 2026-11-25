@@ -10,7 +10,7 @@ private const val CONTINUOUS_TIME = 1_798_589_000_000L
 private fun json(value: String) = Json.parseToJsonElement(value).jsonObject
 
 class ContinuousContractsTest {
-    private class Wire(val delegate: MockTradovateWire = MockTradovateWire(), val root: String = "MES") : TradovateWire by delegate {
+    private class Wire(val delegate: MockTradovateWire = MockTradovateWire(), val root: String = "MES", val fourMonths: Boolean = false) : TradovateWire by delegate {
         var clock = CONTINUOUS_TIME
         var leader = "${root}Z6"
         var failMapping = false
@@ -36,9 +36,14 @@ class ContinuousContractsTest {
         private var channelId = 1000
         val dailyRequests = mutableListOf<JsonObject>()
         val chartRequests = mutableListOf<JsonObject>()
-        val maturities get() = listOf(300L, 301L).map { id -> json("""{"id":$id,"productId":400,"isFront":${id == 300L},"expirationDate":"2027-03-20T00:00:00Z"}""") }
-        val contracts get() = listOf(json("""{"id":200,"name":"${root}Z6","contractMaturityId":300}"""),
-            json("""{"id":201,"name":"${root}H7","contractMaturityId":301}"""))
+        val quoteSubscriptions = mutableListOf<String>()
+        val maturities get() = if (!fourMonths) listOf(300L, 301L).map { id -> json("""{"id":$id,"productId":400,"isFront":${id == 300L},"expirationDate":"2027-03-20T00:00:00Z"}""") }
+            else listOf("2027-01-20", "2027-02-20", "2027-04-20", "2027-06-20").mapIndexed { i, date ->
+                json("""{"id":${300+i},"productId":400,"expirationDate":"${date}T00:00:00Z"}""")
+            }
+        val contracts get() = (if (fourMonths) listOf("Z6", "H7", "J7", "M7") else listOf("Z6", "H7")).mapIndexed { i, month ->
+            json("""{"id":${200+i},"name":"$root$month","contractMaturityId":${300+i}}""")
+        }
         val sessions get() = sessionRows ?: listOf(300L, 301L).flatMap { id -> (28..31).map { day ->
             json("""{"contractMaturityId":$id,"tradeDate":{"year":2026,"month":12,"day":$day},"startTime":"2026-12-${day-1}T23:30Z","openTime":"2026-12-${day-1}T23:00Z","closeTime":"2026-12-${day}T23:29Z","endTime":"2026-12-${day}T23:00Z"}""")
         } }
@@ -53,7 +58,10 @@ class ContinuousContractsTest {
                 if (failMapping) error("offline")
                 JsonArray(maturities)
             }
-            path.startsWith("contract/ldeps") -> JsonArray(contracts)
+            path.startsWith("contract/ldeps") -> {
+                val ids = path.substringAfter("masterids=").split(',').map(String::toLong)
+                JsonArray(contracts.filter { it.long("contractMaturityId") in ids })
+            }
             path.startsWith("contractMaturity/items") -> { maturityBatchRequests++; JsonArray(maturities) }
             path.startsWith("tradingSession/ldeps") -> JsonArray(sessions.filter { !omitFutureSessions || timestamp(it.str("endTime")!!)!! <= clock })
             else -> delegate.request(hosts, token, method, path, body)
@@ -67,6 +75,7 @@ class ContinuousContractsTest {
                     when (parts.first()) {
                         "md/cancelChart" -> json(text.substringAfter("\n\n")).long("subscriptionId")?.let(cancelledCharts::add)
                         "md/subscribequote" -> {
+                            json(text.substringAfter("\n\n")).str("symbol")?.let(quoteSubscriptions::add)
                             if (json(text.substringAfter("\n\n")).str("symbol") in refusedQuotes) {
                                 delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"errorText":"No market entitlement"}}]""")
                                 return
@@ -247,6 +256,15 @@ class ContinuousContractsTest {
         wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$again","entries":{"Trade":{"price":5500.75}}}]}}]""")
         runCurrent()
         assertEquals(afterRetry, wire.delegate.market.sent.count { it == "md/getChart" }, "Retries are rate-limited")
+    }
+
+    @Test fun onlyTheFirstThreeMonthsAreSubscribedForMatching() = runTest {
+        val wire = Wire(root = "MCL", fourMonths = true)
+        val broker = ready(wire)
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
+        assertEquals(setOf("MCLZ6", "MCLH7", "MCLJ7"), wire.quoteSubscriptions.toSet())
+        assertFalse("MCLM7" in wire.quoteSubscriptions)
+        assertNull(broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
     }
 
     @Test fun mclMatchesOnceKeepsItsQuotesAndOnlyRematchesOnManualRefresh() = runTest {
