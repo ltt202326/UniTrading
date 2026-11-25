@@ -1,4 +1,4 @@
-name: Exit and replay records preview
+name: Chart zoom and settings preview
 on:
   push:
     branches: ['build/exit-save-replay-delete-20261125']
@@ -20,9 +20,9 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - name: Verify exit persistence and replay records
+      - name: Verify chart zoom, replay and settings
         run: >-
-          xvfb-run -a ./gradlew :composeApp:desktopTest
+          xvfb-run -a -s '-screen 0 1920x1080x24' ./gradlew :composeApp:desktopTest
           --tests '*DesktopExitTest*'
           --tests '*DesktopWorkspaceSessionStoreTest*'
           --tests '*TradingPreferencesTest*'
@@ -30,17 +30,40 @@ jobs:
           --tests '*ReplayRiskTest*'
           --tests '*ReplayDailyRiskTest*'
           --tests '*ReplaySetupUiTest*'
-          --tests '*SettingsPageTest.desktopExitSavingSwitchStartsOnAndCanBeChanged*'
+          --tests '*ChartGeometryTest*'
+          --tests '*ChartViewMemoryTest*'
+          --tests '*DrawingGeometryTest*'
+          --tests '*CandleZoomUiTest*'
+          --tests '*SettingsPageTest*'
           --tests '*ReplayRecordDeleteUiTest*'
           --tests '*ReplayDailyLossUiTest*'
           --tests '*ReplayConsistencyUiTest*'
-          --tests '*HistoricalReplayUiTest.setupRestrictsReplaySymbolsAndUsesTheRequestedDates*'
+          --tests '*HistoricalReplayUiTest*'
           --no-daemon
+      - name: Verify Tradovate history and cache migration
+        run: >-
+          ./gradlew :tradovate-broker:desktopTest
+          --tests '*CandleCacheTest*'
+          --tests '*IncrementalChartTest*'
+          --tests '*HistoryPreloadTest*'
+          --tests '*ChartHistoryDepthTest*'
+          --no-daemon
+      - name: Verify Rithmic chart history and cache migration
+        run: ./gradlew :rithmic-broker:desktopTest --tests '*RithmicBrokerTest*' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: Exit-Replay-Test-Results
-          path: composeApp/build/test-results/desktopTest/*.xml
+          name: Chart-Zoom-Test-Results
+          path: |
+            composeApp/build/test-results/desktopTest/*.xml
+            tradovate-broker/build/test-results/desktopTest/*.xml
+            rithmic-broker/build/test-results/desktopTest/*.xml
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: Chart-Zoom-Screenshot
+          path: composeApp/build/zoom-2400/chart.png
           if-no-files-found: warn
   windows:
     runs-on: windows-latest
@@ -67,11 +90,11 @@ jobs:
           if (-not (Test-Path "$app/UniTrading.exe")) { throw 'Windows executable missing' }
           if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host missing' }
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-Replay-Daily-Rules-Windows-x64.zip'
+          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-Chart-2400-Windows-x64.zip'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Replay-Daily-Rules-Windows-x64
-          path: dist/UniTrading-Replay-Daily-Rules-Windows-x64.zip
+          name: Chart-2400-Windows-x64
+          path: dist/UniTrading-Chart-2400-Windows-x64.zip
           compression-level: 0
           if-no-files-found: error
   android:
@@ -98,6 +121,6 @@ jobs:
           "$aapt" dump badging "$apk" | grep -F "package: name='com.unitrading.demo.credentialtest'"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Replay-Daily-Rules-Android-preview
+          name: Chart-2400-Android-preview
           path: androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
           if-no-files-found: error
