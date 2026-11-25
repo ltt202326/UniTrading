@@ -1,0 +1,222 @@
+name: Verify UniTrading 1.8.0 release
+on:
+  push:
+    branches: ['build/verify-v1-8-final-20261125']
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Verify release notes
+        run: |
+          python3 scripts/test_release_notes.py
+          python3 scripts/test_release_discord.py
+          python3 scripts/release-notes.py v1.8.0 > /tmp/release-notes.txt
+          test -s /tmp/release-notes.txt
+      - name: Verify replay and charts
+        run: >-
+          xvfb-run -a -s '-screen 0 1920x1080x24' ./gradlew :composeApp:desktopTest
+          --tests '*ReplayProfitTest*'
+          --tests '*ReplaySoftStopTest*'
+          --tests '*ReplayRiskTest*'
+          --tests '*ReplayRecordsTest*'
+          --tests '*HistoricalReplayTest*'
+          --tests '*ReplayDailyLossUiTest*'
+          --tests '*ReplayConsistencyUiTest*'
+          --tests '*ReplaySetupUiTest*'
+          --tests '*HistoricalReplayUiTest*'
+          --tests '*ContinuousContractUiTest*'
+          --tests '*SettingsPageTest*'
+          --tests '*ChartObjectLayersTest*'
+          --tests '*CandleZoomUiTest*'
+          --tests '*ChartPineTest*'
+          --tests '*PineChartUiTest*'
+          --tests '*PineIndicatorSettingsUiTest*'
+          --tests '*PineChartDrawingTest*'
+          --tests '*PineParserTest*'
+          --tests '*PineRuntimeTest*'
+          --no-daemon
+      - name: Verify broker regressions
+        if: always()
+        run: >-
+          ./gradlew :tradovate-broker:desktopTest :rithmic-broker:desktopTest
+          --tests '*CandleCacheTest*'
+          --tests '*ContinuousPriceMatcherTest*'
+          --tests '*HistoryPreloadTest*'
+          --tests '*RithmicBrokerTest*'
+          --no-daemon
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: Release-1.8.0-Test-Results
+          path: |
+            composeApp/build/test-results/desktopTest/*.xml
+            tradovate-broker/build/test-results/desktopTest/*.xml
+            rithmic-broker/build/test-results/desktopTest/*.xml
+          if-no-files-found: warn
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Verify latest GeckoView stable
+        run: |
+          python3 - <<'PYCODE'
+          import re, urllib.request, xml.etree.ElementTree as ET
+          url = 'https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview-arm64-v8a/maven-metadata.xml'
+          root = ET.fromstring(urllib.request.urlopen(url, timeout=30).read())
+          versions = [v.text for v in root.findall('.//version') if v.text and re.fullmatch(r'\d+\.0\.\d+', v.text)]
+          latest = max(versions, key=lambda v: tuple(map(int, v.split('.'))))
+          text = open('androidApp/build.gradle.kts').read()
+          selected = re.search(r'geckoview-\$geckoAbi:([0-9.]+)', text).group(1)
+          print('GeckoView stable:', latest, 'selected:', selected)
+          if selected != latest:
+              raise SystemExit('Configured GeckoView is not the latest stable version')
+          PYCODE
+      - name: Build both Android release variants
+        run: ./gradlew :androidApp:assembleRelease --no-daemon
+      - name: Check both APK identities and versions
+        run: |
+          set -euo pipefail
+          aapt=$(find "$ANDROID_HOME/build-tools" -name aapt2 -type f | sort -V | tail -1)
+          for flavor in standard gecko; do
+            apk="androidApp/build/outputs/apk/$flavor/release/androidApp-$flavor-release-unsigned.apk"
+            test -f "$apk"
+            badging="$("$aapt" dump badging "$apk")"
+            echo "$badging" | grep -F "package: name='com.unitrading.demo' versionCode='14' versionName='1.8.0'"
+            unzip -t "$apk" >/dev/null
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Release-1.8.0-Android-Unsigned
+          path: androidApp/build/outputs/apk/*/release/*-unsigned.apk
+          if-no-files-found: error
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - run: ./gradlew.bat :composeApp:createDistributable --no-daemon
+      - name: Check and archive Windows app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = 'composeApp/build/compose/binaries/main/app/UniTrading'
+          $version = (Get-Item "$app/UniTrading.exe").VersionInfo.ProductVersion
+          if ($version -ne '1.8.0') { throw "Unexpected Windows version $version" }
+          if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host missing' }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-1.8.0-windows-x64.zip'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Release-1.8.0-Windows
+          path: dist/*.zip
+          compression-level: 0
+          if-no-files-found: error
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Verify macOS-specific code
+        run: ./gradlew :composeApp:desktopTest --tests 'com.unitrading.DesktopCredentialStoreTest' --tests 'com.unitrading.KeychainSealTest' --tests 'com.unitrading.DesktopLoginHandoffTest' --no-daemon
+      - run: ./gradlew :composeApp:createDistributable --no-daemon
+      - name: Check and archive macOS app
+        run: |
+          set -euo pipefail
+          app=composeApp/build/compose/binaries/main/app/UniTrading.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")" = '1.8.0'
+          host="$app/Contents/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin"
+          test -x "$host"
+          "$host" --self-test
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          mkdir -p dist
+          ditto -c -k --keepParent "$app" dist/UniTrading-1.8.0-macos-arm64.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Release-1.8.0-macOS
+          path: dist/*.zip
+          compression-level: 0
+          if-no-files-found: error
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Build and validate unsigned iOS IPA
+        run: |
+          set -euo pipefail
+          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/ios-build" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
+          app="$RUNNER_TEMP/ios-build/Build/Products/Release-iphoneos/UniTrading.app"
+          widget="$app/PlugIns/UniTradingWidgets.appex"
+          test -f "$app/UniTrading"
+          test -d "$widget"
+          for info in "$app/Info.plist" "$widget/Info.plist"; do
+            test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$info")" = '1.8.0'
+            test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$info")" = '14'
+          done
+          mkdir -p Payload dist
+          cp -R "$app" Payload/
+          zip -qry dist/UniTrading-1.8.0-ios-unsigned.ipa Payload
+          unzip -t dist/UniTrading-1.8.0-ios-unsigned.ipa >/dev/null
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Release-1.8.0-iOS-Unsigned
+          path: dist/*.ipa
+          if-no-files-found: error
