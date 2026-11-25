@@ -41,6 +41,7 @@ jobs:
           --tests '*HistoricalReplayUiTest*'
           --no-daemon
       - name: Verify Tradovate history and cache migration
+        if: ${{ always() }}
         run: >-
           ./gradlew :tradovate-broker:desktopTest
           --tests '*CandleCacheTest*'
@@ -49,6 +50,7 @@ jobs:
           --tests '*ChartHistoryDepthTest*'
           --no-daemon
       - name: Verify Rithmic chart history and cache migration
+        if: ${{ always() }}
         run: ./gradlew :rithmic-broker:desktopTest --tests '*RithmicBrokerTest*' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
