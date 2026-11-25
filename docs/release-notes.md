@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 连续期货通过最近三个未到期月份的一次价格比对匹配买卖报价；匹配后保留结果，行情栏新增手动更新，并支持自选品种并发查询。价格匹配并非券商对月份的确认。
+
 - 非股指连续合约保留券商连续图表，使用连续价格与同品种月份多次实时成交匹配买卖报价；匹配不唯一、行情不可用或证据过期时暂停连续合约下单。价格匹配是推断，需在券商模拟账户核验。
 
 - 修复回放 K 线倒计时和成交后残留的订单草稿；支持收起回放侧栏、在图表上提交和修改订单数量，并移除模拟持仓卡片。
@@ -23,6 +25,8 @@
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
 ## English
+
+- Match continuous-futures quotes once against the three nearest unexpired months, retain the result until manually refreshed, and resolve watch-list products concurrently. Price matching does not constitute broker confirmation.
 
 - Preserve broker continuous charts for non-index futures and match real-time trades across dated contracts to select Bid/Ask. Ambiguous, unavailable or stale evidence blocks continuous-symbol orders. Matching is heuristic and needs broker demo validation.
 

@@ -49,7 +49,7 @@ jobs:
       - name: Verify broker and replay history
         run: |
           ./gradlew :tradovate-broker:desktopTest --no-daemon
-          xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*ReplayHistoryCacheTest*' --tests '*ContinuousContractUiTest*' --no-daemon
+          xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*ReplayHistoryCacheTest*' --tests '*ContinuousContractUiTest*' --tests '*MarketWatchUiTest*' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

@@ -9,9 +9,10 @@ import kotlin.test.*
 class MarketWatchConcurrencyTest {
     private fun json(text: String) = Json.parseToJsonElement(text).jsonObject
 
-    private inner class Wire(includeThirdProduct: Boolean = false, val delegate: MockTradovateWire = MockTradovateWire()) : TradovateWire by delegate {
-        val now = timestamp("2026-12-29T12:00Z")!!
-        val roots = if (includeThirdProduct) listOf("MES", "MNQ", "RTY") else listOf("MES", "MNQ")
+    private inner class Wire(includeThirdProduct: Boolean = false, includePriceProducts: Boolean = false, val delegate: MockTradovateWire = MockTradovateWire()) : TradovateWire by delegate {
+        var now = timestamp("2026-12-29T12:00Z")!!
+        val roots = if (includePriceProducts) listOf("MGC", "MCL") else if (includeThirdProduct) listOf("MES", "MNQ", "RTY") else listOf("MES", "MNQ")
+        val monitors = mutableMapOf<String, Long>()
         val contracts = roots.flatMapIndexed { index, root ->
             listOf("Z6", "H7", "M7").mapIndexed { month, suffix ->
                 json("""{"id":${200 + index * 10 + month},"name":"$root$suffix","contractMaturityId":${300 + index * 10 + month}}""")
@@ -90,7 +91,12 @@ class MarketWatchConcurrencyTest {
                         "md/getChart" -> {
                             val body = json(text.substringAfter("\n\n"))
                             val symbol = body.str("symbol")!!
-                            check(!symbol.startsWith("@"))
+                            if (symbol.startsWith("@")) {
+                                val id = ++nextChart
+                                monitors[symbol] = id
+                                delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"historicalId":$id,"realtimeId":$id,"mode":"RealTime"}}]""")
+                                return
+                            }
                             val id = ++nextChart
                             dailyRequests.add(symbol)
                             activeCharts[id] = symbol
@@ -119,6 +125,32 @@ class MarketWatchConcurrencyTest {
         broker.connect()
         assertEquals(wire.roots.map { "@$it" }.toSet(), broker.instruments.filter { it.isContinuous }.map { it.symbol }.toSet())
         return broker
+    }
+
+    @Test fun watchListMatchesTwoProductsWithoutOpeningTheirCharts() = runTest {
+        val wire = Wire(includePriceProducts = true).apply { roots.forEach { mappingGates[it] = CompletableDeferred() } }
+        val broker = ready(wire)
+        broker.watchQuotes(linkedSetOf("@MGC", "@MCL"))
+        advanceTimeBy(3_000); runCurrent()
+        assertEquals(setOf("MGC", "MCL"), wire.mappingRequests.keys, "Both products can discover months concurrently")
+        wire.mappingGates.values.forEach { it.complete(Unit) }
+        advanceTimeBy(20_000); runCurrent()
+        assertEquals(setOf("@MGC", "@MCL"), wire.monitors.keys, "Both watch-list aliases receive live prices")
+        for (i in 0..2) {
+            wire.now += 1000
+            val at = kotlin.time.Instant.fromEpochMilliseconds(wire.now).toString()
+            for ((index, alias) in listOf("@MGC", "@MCL").withIndex()) {
+                val price = 5500.0 + index * 100 + i * 0.25
+                val id = wire.monitors.getValue(alias)
+                val contractId = 200 + index * 10
+                wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,"s":"s","bars":[{"timestamp":"$at","open":$price,"high":$price,"low":$price,"close":$price}]}]}}]""")
+                wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":$contractId,"timestamp":"$at","entries":{"Trade":{"price":$price},"Bid":{"price":$price},"Offer":{"price":${price + 0.25}}}},{"contractId":${contractId + 1},"timestamp":"$at","entries":{"Trade":{"price":${price + 10}}}},{"contractId":${contractId + 2},"timestamp":"$at","entries":{"Trade":{"price":${price + 20}}}}]}}]""")
+            }
+            runCurrent()
+        }
+        assertEquals("MGCZ6", broker.instruments.single { it.symbol == "@MGC" }.executionSymbol)
+        assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
     }
 
     @Test fun slowMissingSymbolDoesNotDelayKnownContinuousQuotes() = runTest {

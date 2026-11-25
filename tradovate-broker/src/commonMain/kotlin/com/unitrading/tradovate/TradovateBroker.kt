@@ -88,8 +88,13 @@ class TradovateBroker(
     private val priceMatchers = mutableMapOf<String, ContinuousPriceMatcher>()
     private val priceMatchReady = mutableSetOf<String>()
     private val priceMatchExpiry = mutableMapOf<String, Long>()
+    private val priceMatchExpirations = mutableMapOf<String, Map<String, Long>>()
+    private val latestContinuousPrice = mutableMapOf<String, Pair<Long, Long>>()
     private val realTimeQuoteSymbols = mutableSetOf<String>()
     private val continuousResolutionSlots = Semaphore(2)
+    // Independent price-based products progress concurrently; global REST pacing still applies.
+    private val priceResolutionSlots = Semaphore(4)
+    private val priceQuoteSlots = Semaphore(4)
     private val volumeSlots = Semaphore(3)
     // History reads can overlap; a cleanup must never cancel another read's pending IDs twice.
     private val chartCancelLock = Mutex()
@@ -115,9 +120,11 @@ class TradovateBroker(
     private val chartBackfillJobs = mutableMapOf<Pair<String, Timeframe>, Job>()
     private class ChartPage(val series: Pair<String, Timeframe>, val load: ChartLoad, val startedAt: Long,
         val liveOnly: Boolean, val historyOnly: Boolean, var ended: Boolean = false,
-        val sourceSymbol: String = series.first)
+        val sourceSymbol: String = series.first, val priceMonitor: Boolean = false)
     private data class ChartChannel(val wireId: JsonPrimitive, val page: ChartPage, val historical: Boolean, val shared: Boolean)
     private val charts = mutableMapOf<String, ChartChannel>()
+    private var priceMonitorJob: Job? = null
+    private val priceMonitorRetryAt = mutableMapOf<String, Long>()
     // Arrival times, not candle timestamps: the latter stay fixed throughout the bar.
     private val continuousChartProgress = mutableMapOf<Pair<String, Timeframe>, Long>()
     private val continuousChartLiveBar = mutableMapOf<Pair<String, Timeframe>, Long>()
@@ -185,7 +192,10 @@ class TradovateBroker(
         if (credentials.expiresAtMs?.let { it - now() < 120_000 } == true) renewSession(followHosts = true)
         connected = false
         marketReady = false
-        continuousRoutes = continuousRoutes.mapValues { (_, route) -> route.copy(checkedAt = null, validUntil = 0) }
+        continuousRoutes = continuousRoutes.mapValues { (symbol, route) ->
+            if (usesContinuousPriceMatching(symbol) && route.spec.tradeSymbol != null && priceMatchExpiry[symbol]?.let { now() < it } == true) route
+            else route.copy(checkedAt = null, validUntil = 0)
+        }
         problem = "登录会话已交接，正在读取 ${credentials.environment.wire} 授权账户列表"
         onProgress(problem)
         publish()
@@ -249,6 +259,7 @@ class TradovateBroker(
                         publish()
                     }
                 }
+                schedulePriceMonitors()
                 if (quoteWatchJob?.isActive != true && lock.withLock { quoteWatchSymbols.any { symbol ->
                     quoteWatchJobs[symbol]?.isActive != true && continuousRoutes[symbol]?.let {
                         now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000)
@@ -329,7 +340,7 @@ class TradovateBroker(
         publish()
         synchronizeAccount(socket)
         hydrateContracts()
-        watching?.takeIf { it.first in continuousRoutes }?.let { refreshContinuous(it.first, force = true); startWatch(it) }
+        watching?.takeIf { it.first in continuousRoutes }?.let { if (!usesContinuousPriceMatching(it.first)) refreshContinuous(it.first, force = true); startWatch(it) }
         refreshBalances()
         problem = "账户状态已重新同步"
         publish()
@@ -423,7 +434,13 @@ class TradovateBroker(
         // Web sessions use their account token on the selected market-data gateway too.
         val token = credentials.accessToken
         lock.withLock {
-            quoteSides.clear(); quotes = emptyMap(); priceMatchCandidates.clear(); priceMatchers.clear(); priceMatchReady.clear(); priceMatchExpiry.clear(); realTimeQuoteSymbols.clear(); activeDom = null; subscribedDom = null; domTimeMs = null
+            quoteSides.clear(); quotes = emptyMap(); latestContinuousPrice.clear(); realTimeQuoteSymbols.clear()
+            // Keep successful one-shot bindings across reconnects; only unfinished matches need new evidence.
+            for (symbol in priceMatchCandidates.keys.toList()) if (continuousRoutes[symbol]?.spec?.tradeSymbol == null) {
+                priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol); priceMatchReady.remove(symbol)
+                priceMatchExpiry.remove(symbol); priceMatchExpirations.remove(symbol)
+            }
+            activeDom = null; subscribedDom = null; domTimeMs = null
             mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情重连，等待深度订阅")
         }
         try {
@@ -455,12 +472,13 @@ class TradovateBroker(
                     pendingQuotes.forEach { it.cancel() }
                     pendingQuotes.joinAll()
                     continuousJob?.cancelAndJoin()
+                    priceMonitorJob?.cancelAndJoin()
                     (watchJobs.values + chartBackfillJobs.values).toList().forEach { it.cancelAndJoin() }
                     lock.withLock { preloadJob }?.cancelAndJoin()
                     cancelledChartIds.clear()
                     pendingChartCancellations.clear()
                     accountSocket?.close(); marketSocket?.close(); marketReady = false
-                    charts.clear(); continuousChartProgress.clear(); continuousChartLiveBar.clear(); continuousChartRetryAfter.clear(); preloadCharts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
+                    charts.clear(); priceMonitorRetryAt.clear(); continuousChartProgress.clear(); continuousChartLiveBar.clear(); continuousChartRetryAfter.clear(); preloadCharts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
                     volumeCharts.values.forEach { it.result.completeExceptionally(IllegalStateException("行情已重连")) }; volumeCharts.clear()
                     connect()
                     return@launch
@@ -475,7 +493,7 @@ class TradovateBroker(
         connected = false; marketReady = false; problem = "已断开"
         mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情已断开，深度已清空")
         publish()
-        latencyJob?.cancel(); maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
+        latencyJob?.cancel(); maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); priceMonitorJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch {
             val pendingQuotes = lock.withLock { quoteWatchJobs.values.toList().also { quoteWatchJobs.clear() } }
             pendingQuotes.forEach { it.cancel() }
@@ -521,6 +539,30 @@ class TradovateBroker(
         if (stopped || quoteWatchSymbols == symbols) return
         quoteWatchSymbols = symbols.toSet()
         refreshQuoteWatch()
+        schedulePriceMonitors()
+    }
+
+    override suspend fun refreshContinuousQuotes(symbols: Set<String>) {
+        val targets = symbols.filter { it.startsWith("@") && continuousRoutes.containsKey(it) }.distinct()
+        val previousJobs = lock.withLock { targets.mapNotNull { quoteWatchJobs.remove(it) } }
+        previousJobs.forEach { it.cancel() }; previousJobs.joinAll()
+        if (watching?.first in targets) { continuousJob?.cancelAndJoin(); continuousJob = null }
+        lock.withLock {
+            for (symbol in targets) if (usesContinuousPriceMatching(symbol)) {
+                priceMatchReady.remove(symbol); priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol)
+                priceMatchExpiry.remove(symbol); priceMatchExpirations.remove(symbol); latestContinuousPrice.remove(symbol)
+                continuousRoutes[symbol]?.let { route -> continuousRoutes = continuousRoutes + (symbol to route.copy(
+                    spec = route.spec.copy(tradeSymbol = null, quoteSymbol = null, tradeSymbolStatus = "正在更新连续合约"), checkedAt = null, validUntil = 0)) }
+            }
+            rebuild()
+        }
+        coroutineScope { targets.map { symbol -> async {
+            refreshContinuous(symbol, force = true)
+            // Each product can restart its own displayed chart without waiting for other products.
+            if (usesContinuousPriceMatching(symbol)) watched.filter { it.first == symbol }.forEach { startWatch(it, forceRefresh = true) }
+        } }.awaitAll() }
+        syncWatchQuotes()
+        schedulePriceMonitors()
     }
 
     private fun refreshQuoteWatch() {
@@ -547,6 +589,7 @@ class TradovateBroker(
                         syncWatchQuotes()
                         if (symbol in continuousRoutes) refreshContinuous(symbol)
                         syncWatchQuotes()
+                        schedulePriceMonitors()
                         preloadWake.trySend(Unit)
                     }
                 }
@@ -563,31 +606,35 @@ class TradovateBroker(
 
     /** Called under chartWatchLock; chart and watch-list subscriptions share one owner. */
     private suspend fun syncQuoteSubscriptions(socket: TradovateSocket) {
-        val requested = quoteWatchSymbols + watched.map { it.first }
-        // Quotes only map to loaded specs; an unconfirmed series' last contract waits for its spec.
-        val loaded = instruments.filterNot { it.isContinuous }.mapTo(HashSet()) { it.symbol }
-        val matching = priceMatchCandidates.filterKeys { it in requested }.values.flatten()
-        val wanted = (matching + accountFlows.values.flatMap { flow ->
-            flow.value.positions.map(Position::symbol) + flow.value.orders.map { it.request.symbol }
-        } + instruments.filter { it.symbol in requested }.mapNotNull { it.priceSymbol }.filter { it in loaded }).toSet()
-        for (old in subscribedQuotes.toList() - wanted) {
-            socket.request("md/unsubscribequote", buildJsonObject { put("symbol", old) })
-            subscribedQuotes.remove(old)
-            realTimeQuoteSymbols.remove(old)
+        val (wanted, already) = lock.withLock {
+            val requested = quoteWatchSymbols + watched.map { it.first }
+            val loaded = instruments.filterNot { it.isContinuous }.mapTo(HashSet()) { it.symbol }
+            val matching = priceMatchCandidates.filterKeys { it in requested && continuousRoutes[it]?.spec?.tradeSymbol == null }.values.flatten()
+            val names = (matching + accountFlows.values.flatMap { flow ->
+                flow.value.positions.map(Position::symbol) + flow.value.orders.map { it.request.symbol }
+            } + instruments.filter { it.symbol in requested }.mapNotNull { it.priceSymbol }.filter { it in loaded }).toSet()
+            names to subscribedQuotes.toSet()
         }
-        // One refused symbol must not leave the rest of the watch list without quotes.
-        var failure: Exception? = null
-        for (name in wanted - subscribedQuotes) {
+        for (old in already - wanted) {
+            socket.request("md/unsubscribequote", buildJsonObject { put("symbol", old) })
+            lock.withLock { subscribedQuotes.remove(old); realTimeQuoteSymbols.remove(old) }
+        }
+        // Multiple symbols can wait for acknowledgements at once; writes to the socket itself
+        // remain serialized, and one refused subscription cannot cancel the other symbols.
+        val failures = coroutineScope { (wanted - already).map { name -> async { priceQuoteSlots.withPermit {
             try {
                 val response = socket.request("md/subscribequote", buildJsonObject { put("symbol", name) })
                 val mode = response.str("mode")
                 if (mode != null && mode != "RealTime") throw TradovateRemoteException(403, "行情模式 $mode，不允许使用延迟报价下单")
-                subscribedQuotes.add(name)
-                if (mode == "RealTime") realTimeQuoteSymbols.add(name)
+                lock.withLock {
+                    subscribedQuotes.add(name)
+                    if (mode == "RealTime") realTimeQuoteSymbols.add(name)
+                }
+                null
             } catch (cancel: CancellationException) { throw cancel }
-            catch (error: Exception) { if (failure == null) failure = error }
-        }
-        failure?.let { throw it }
+            catch (error: Exception) { error }
+        } } }.awaitAll() }
+        failures.firstOrNull { it != null }?.let { throw it }
     }
 
     /** Read-only resolution entry point; valid routes and cached completed-day volumes are reused. */
@@ -597,7 +644,7 @@ class TradovateBroker(
             // Cached reads do not wait for unrelated products. Admission to the bounded
             // ranking pipeline happens before the per-product network timeout starts.
             if (!lock.withLock { needsContinuousCheck(symbol, force) }) return@withLock
-            continuousResolutionSlots.withPermit { resolveContinuous(symbol, force) }
+            (if (usesContinuousPriceMatching(symbol)) priceResolutionSlots else continuousResolutionSlots).withPermit { resolveContinuous(symbol, force) }
         }
     }
 
@@ -618,6 +665,7 @@ class TradovateBroker(
         lock.withLock {
             priceMatchReady.remove(symbol)
             priceMatchExpiry.remove(symbol)
+            priceMatchExpirations.remove(symbol)
             priceMatchCandidates.remove(symbol)
             priceMatchers.remove(symbol)
             continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(tradeSymbol = null, quoteSymbol = null,
@@ -627,9 +675,7 @@ class TradovateBroker(
         try {
             val maturities = (rest("GET", "contractMaturity/deps?masterid=${route.productId}") as? JsonArray ?: error("月份列表不可用"))
                 .map { it.jsonObject }
-            require(maturities.all { it.long("productId") == route.productId }) { "月份所属品种不一致" }
-            val active = maturities.filter { row -> requireNotNull(row.str("expirationDate")?.let(::timestamp)) { "月份到期时间缺失" } > now() }
-            require(active.isNotEmpty() && active.size <= 200) { "候选月份为空或超过行情订阅上限" }
+            val active = nearestThreeMaturities(maturities, route.productId, now())
             val ids = active.map { requireNotNull(it.long("id")) }
             require(ids.distinct().size == ids.size) { "月份重复" }
             val contracts = ids.chunked(50).flatMap { chunk ->
@@ -642,27 +688,34 @@ class TradovateBroker(
                 contracts.map { it.long("id") }.distinct().size == contracts.size) { "月份合约不完整或品种不一致" }
             lock.withLock { active.forEach { book.apply("contractMaturity", it) }; contracts.forEach { book.apply("contract", it) } }
             val contractIds = contracts.map { it.long("id")!! }
-            // hydrateContracts caps each pass; do not silently omit long-dated oil months.
-            for (chunk in contractIds.chunked(50)) hydrateContracts(chunk)
+            hydrateContracts(contractIds)
             val names = contracts.map { it.str("name")!! }.toSet()
             lock.withLock {
                 check(marketReady && marketSocket === socket) { "行情连接已变化" }
                 require(contractIds.all { it in contractSpecs }) { "候选合约规格不完整" }
                 priceMatchCandidates[symbol] = names
-                priceMatchExpiry[symbol] = active.minOf { timestamp(it.str("expirationDate")!!)!! }
-                priceMatchers[symbol] = ContinuousPriceMatcher()
+                val expiryById = active.associate { it.long("id")!! to timestamp(it.str("expirationDate")!!)!! }
+                priceMatchExpirations[symbol] = contracts.associate { it.str("name")!! to expiryById.getValue(it.long("contractMaturityId")!!) }
+                priceMatchers[symbol] = ContinuousPriceMatcher().also { matcher ->
+                    latestContinuousPrice[symbol]?.takeIf { now() - it.second in 0..15_000 }?.let { matcher.chart(it.first, it.second) }
+                }
             }
-            chartWatchLock.withLock { check(marketSocket === socket && marketReady); syncQuoteSubscriptions(socket) }
+            // A different product may have a refused subscription; only this product's
+            // own incomplete candidates prevent its matching from starting.
+            try { chartWatchLock.withLock { check(marketSocket === socket && marketReady); syncQuoteSubscriptions(socket) } }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { /* Checked against this product's names below. */ }
             lock.withLock {
                 check(marketSocket === socket && marketReady && names.all { it in subscribedQuotes && it in realTimeQuoteSymbols }) { "候选月份实时行情订阅不完整" }
                 priceMatchReady.add(symbol)
                 updatePriceRoute(symbol)
                 rebuild()
             }
+            schedulePriceMonitors()
         } catch (cancel: CancellationException) { throw cancel }
         catch (e: Exception) {
             lock.withLock {
-                priceMatchReady.remove(symbol); priceMatchExpiry.remove(symbol); priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol)
+                priceMatchReady.remove(symbol); priceMatchExpiry.remove(symbol); priceMatchExpirations.remove(symbol); priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol)
                 continuousRoutes[symbol]?.let { current ->
                     continuousRoutes = continuousRoutes + (symbol to current.copy(spec = current.spec.copy(tradeSymbol = null,
                         quoteSymbol = null, tradeSymbolStatus = "月份待确认：${safeMessage(e.message ?: "无法读取实时行情")}"), checkedAt = now(), validUntil = 0))
@@ -672,24 +725,32 @@ class TradovateBroker(
         }
     }
 
-    /** Called under the state lock. Price matching is a heuristic and expires when observations stop. */
+    /** A successful one-shot match is retained until the user presses refresh or the contract expires. */
     private fun updatePriceRoute(symbol: String) {
         val route = continuousRoutes[symbol] ?: return
-        if (priceMatchExpiry[symbol]?.let { now() >= it } == true) {
-            priceMatchExpiry.remove(symbol); priceMatchReady.remove(symbol); priceMatchCandidates.remove(symbol); priceMatchers.remove(symbol)
-            continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(tradeSymbol = null, quoteSymbol = null,
-                tradeSymbolStatus = "月份到期，正在重新核对"), checkedAt = null, validUntil = 0))
-            rebuild()
+        val current = route.spec.tradeSymbol
+        if (current != null) {
+            if (priceMatchExpiry[symbol]?.let { now() >= it } == true) {
+                priceMatchReady.remove(symbol); priceMatchExpiry.remove(symbol); priceMatchExpirations.remove(symbol); priceMatchers.remove(symbol)
+                // Keep the candidate entry as a sentinel: do not automatically rematch an expired contract.
+                continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(tradeSymbol = null, quoteSymbol = null,
+                    tradeSymbolStatus = "已到期，请点击行情更新"), checkedAt = now(), validUntil = 0))
+                rebuild()
+                scope.launch { syncWatchQuotes(); schedulePriceMonitors() }
+            }
             return
         }
-        val winner = if (symbol in priceMatchReady) priceMatchers[symbol]?.unique(priceMatchCandidates[symbol].orEmpty(), now()) else null
-        val target = contractSpecs.values.firstOrNull { it.symbol == winner }
-        val mapped = target?.symbol
-        if (mapped == route.spec.tradeSymbol && (mapped != null || route.spec.tradeSymbolStatus == "连续价格匹配中")) return
-        val spec = (target ?: route.spec).copy(symbol = symbol, category = "连续合约", isContinuous = true,
-            tradeSymbol = mapped, quoteSymbol = mapped, tradeSymbolStatus = if (mapped == null) "连续价格匹配中" else "价格匹配（非券商确认）")
-        continuousRoutes = continuousRoutes + (symbol to route.copy(spec = spec, checkedAt = now(), validUntil = if (mapped == null) 0 else now() + 10_000))
+        val mapped = if (symbol in priceMatchReady) priceMatchers[symbol]?.unique(priceMatchCandidates[symbol].orEmpty(), now()) else null
+        if (mapped == null) return
+        val target = contractSpecs.values.firstOrNull { it.symbol == mapped } ?: return
+        val expiry = priceMatchExpirations[symbol]?.get(mapped)?.takeIf { now() < it } ?: return
+        val spec = target.copy(symbol = symbol, category = "连续合约", isContinuous = true,
+            tradeSymbol = mapped, quoteSymbol = mapped, tradeSymbolStatus = "价格匹配（非券商确认）")
+        priceMatchExpiry[symbol] = expiry
+        continuousRoutes = continuousRoutes + (symbol to route.copy(spec = spec, checkedAt = now(), validUntil = expiry))
         rebuild()
+        // Stop the extra chart and unused candidate quotes. The matched contract keeps streaming Bid/Ask.
+        scope.launch { syncWatchQuotes(); schedulePriceMonitors() }
     }
 
     /** Only callers for the same symbol wait on each other; daily chart capacity is shared globally. */
@@ -822,10 +883,9 @@ class TradovateBroker(
         val source = request.sourceSymbol ?: return
         val route = continuousRoutes[source] ?: errorArgument("连续合约映射尚未加载")
         if (usesContinuousPriceMatching(source)) {
-            val matched = if (source in priceMatchReady && priceMatchExpiry[source]?.let { now() < it } == true) priceMatchers[source]?.unique(priceMatchCandidates[source].orEmpty(), now()) else null
-            require(matched != null && matched == route.spec.tradeSymbol) { "连续合约对应月份未确认或匹配依据已过期，请等待行情重新匹配" }
-            require(priceMatchCandidates[source].orEmpty().all { it in subscribedQuotes && it in realTimeQuoteSymbols }) { "候选月份的实时行情订阅不完整" }
-            require(matched in subscribedQuotes && quotes[matched]?.let(::fresh) == true) { "对应月份的实时 Bid/Ask 不可用或已过期" }
+            val selected = route.spec.tradeSymbol
+            require(selected != null && source in priceMatchReady && priceMatchExpiry[source]?.let { now() < it } == true) { "连续合约月份未匹配或已到期，请点击行情更新" }
+            require(selected in subscribedQuotes && selected in realTimeQuoteSymbols && fresh(quotes[selected])) { "匹配月份的实时 Bid/Ask 不可用或已过期" }
         }
         require(route.spec.tradeSymbol != null && (usesContinuousPriceMatching(source) || route.checkedAt?.let { now() >= it && now() < route.validUntil } == true)) { "连续合约月份依据已过期或无法确认，请重新选择连续合约" }
         require(route.spec.tradeSymbol == request.symbol) { "主力合约已换月，请检查新合约并重新确认订单" }
@@ -1068,6 +1128,7 @@ class TradovateBroker(
         if (previous.firstOrNull()?.first != next.firstOrNull()?.first) { continuousJob?.cancel(); continuousJob = null }
         watched = next
         (previous - next.toSet()).forEach(::stopWatch)
+        schedulePriceMonitors()
         // The chart the user works on is asked for again on every call, as before; the others only when they are new.
         next.forEachIndexed { index, one ->
             if (index == 0 || one !in previous || one in changedDepth) startWatch(one, forceRefresh = one in changedDepth || index == 0 && previous.isNotEmpty() && previous.first() != one)
@@ -1099,6 +1160,8 @@ class TradovateBroker(
                 preloadWake.trySend(Unit)
                 val socket = marketSocket ?: return@launch
                 if (!marketReady) return@launch
+                val monitors = lock.withLock { charts.values.map { it.page }.filter { it.priceMonitor && it.series.first == symbol }.distinct() }
+                withContext(NonCancellable) { monitors.forEach { cancelCharts(socket, page = it) } }
                 val source = symbol
                 val cacheSeries = chartCacheKey(series, source)
                 val deep = series in extendedHistory
@@ -1134,6 +1197,44 @@ class TradovateBroker(
                     publish()
                 } catch (cancel: CancellationException) { throw cancel }
                 catch (error: Exception) { problem = safeMessage(error.message ?: "行情/历史订阅失败"); publish() }
+            }
+        }
+    }
+
+    /** Lightweight live streams provide price evidence for watch-list symbols that have no open chart. */
+    private fun schedulePriceMonitors() {
+        if (stopped || !marketReady || priceMonitorJob?.isActive == true) return
+        priceMonitorJob = scope.launch {
+            chartWatchLock.withLock {
+                val socket = marketSocket ?: return@withLock
+                if (!marketReady || stopped) return@withLock
+                val requested = quoteWatchSymbols.filter { usesContinuousPriceMatching(it) && it in priceMatchReady && continuousRoutes[it]?.spec?.tradeSymbol == null }.toSet()
+                val open = watched.map { it.first }.toSet()
+                val existing = lock.withLock { charts.values.map { it.page }.filter { it.priceMonitor }.distinct() }
+                for (page in existing) if (page.series.first !in requested || page.series.first in open) {
+                    withContext(NonCancellable) { cancelCharts(socket, page = page) }
+                }
+                val present = lock.withLock { charts.values.map { it.page }.filter { it.priceMonitor }.map { it.series.first }.toSet() }
+                // Limit background chart pressure; a server rejection retries later and never guesses a month.
+                val needed = (requested - open - present).filter { now() >= (priceMonitorRetryAt[it] ?: 0L) }.take((8 - present.size).coerceAtLeast(0))
+                for (symbol in needed) {
+                    if (stopped || !marketReady || marketSocket !== socket || symbol !in quoteWatchSymbols || watched.any { it.first == symbol }) break
+                    try {
+                        val series = symbol to Timeframe.M1
+                        val page = ChartPage(series, ChartLoad(emptyList()), now(), liveOnly = true, historyOnly = false, priceMonitor = true)
+                        withContext(NonCancellable) { requestChart(socket, page, buildJsonObject { put("asMuchAsElements", 1) }) }
+                        priceMonitorRetryAt.remove(symbol)
+                    } catch (cancel: CancellationException) { throw cancel }
+                    catch (_: Exception) {
+                        priceMonitorRetryAt[symbol] = now() + 60_000
+                        lock.withLock {
+                            continuousRoutes[symbol]?.let { route -> if (route.spec.tradeSymbol == null && route.spec.quoteSymbol == null) {
+                                continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(tradeSymbolStatus = "后台行情不可用，请打开图表重试")))
+                                rebuild()
+                            } }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1180,7 +1281,7 @@ class TradovateBroker(
             throw error
         }
         lock.withLock {
-            if (!page.historyOnly && page.series.first in continuousRoutes) {
+            if (!page.historyOnly && !page.priceMonitor && page.series.first in continuousRoutes) {
                 continuousChartProgress[page.series] = now()
                 continuousChartLiveBar.remove(page.series)
             }
@@ -1208,8 +1309,8 @@ class TradovateBroker(
         val pending = lock.withLock {
             val retired = charts.filterValues { when {
                 page != null -> it.page === page
-                series != null -> it.page.series == series
-                else -> it.page.series !in keep
+                series != null -> it.page.series == series && !it.page.priceMonitor
+                else -> it.page.series !in keep && !(it.page.priceMonitor && it.page.series.first in quoteWatchSymbols)
             } }
             cancelledChartIds.addAll(retired.keys)
             retired.forEach { (key, channel) -> pendingChartCancellations[key] = channel.wireId; charts.remove(key) }
@@ -1530,7 +1631,7 @@ class TradovateBroker(
                 if (previous != null && previous.time > time) continue
                 if (listOfNotNull(incomingBid, incomingAsk).any { it <= 0 || it % spec.tickSize != 0L }) continue
                 if (incomingTrade != null && now() - time in -5_000..5_000) {
-                    priceMatchCandidates.filterValues { spec.symbol in it }.keys.forEach { alias ->
+                    priceMatchCandidates.filter { (alias, names) -> spec.symbol in names && continuousRoutes[alias]?.spec?.tradeSymbol == null }.keys.forEach { alias ->
                         priceMatchers[alias]?.trade(spec.symbol, incomingTrade, now())
                         updatePriceRoute(alias)
                     }
@@ -1547,6 +1648,7 @@ class TradovateBroker(
                 val ask = next.ask ?: continue
                 if (ask < bid) continue
                 quotes = quotes + (spec.symbol to Quote(bid, ask, quoteTime, next.lastTrade, next.settlement))
+                priceMatchCandidates.filter { (alias, names) -> spec.symbol in names && continuousRoutes[alias]?.spec?.tradeSymbol == null }.keys.forEach(::updatePriceRoute)
             }
         }
         if (frame.str("e") == "md") for (dom in data.array("doms")) {
@@ -1603,14 +1705,22 @@ class TradovateBroker(
         val endOfHistory = !page.liveOnly && !page.ended && chart.bool("eoh") == true
         val historical = page.historyOnly || endOfHistory ||
             if (channel.shared) chart.str("s") == "db" || (chart.str("s") !in listOf("", "s") && !page.ended) else channel.historical
-        if (!historical && chart.str("s") != "db" && incoming.isNotEmpty() && incoming.size == chart.array("bars").size && key.first in continuousRoutes) {
+        if (!historical && chart.str("s") != "db" && incoming.isNotEmpty() && incoming.size == chart.array("bars").size && key.first in continuousRoutes && !page.priceMonitor) {
             continuousChartProgress[key] = now()
             incoming.maxOfOrNull(Candle::timeMs)?.let { newest -> continuousChartLiveBar[key] = maxOf(continuousChartLiveBar[key] ?: newest, newest) }
-            if (usesContinuousPriceMatching(key.first)) incoming.maxByOrNull(Candle::timeMs)?.let { bar ->
-                priceMatchers[key.first]?.chart(bar.close, now())
-                updatePriceRoute(key.first)
+        }
+        // A recent newest bar may seed the one-shot search immediately when the chart loads.
+        if (usesContinuousPriceMatching(key.first) && continuousRoutes[key.first]?.spec?.tradeSymbol == null && incoming.size == chart.array("bars").size) {
+            incoming.maxByOrNull(Candle::timeMs)?.let { bar ->
+                val recentWindow = maxOf(120_000L, key.second.millis + 60_000L)
+                if (now() - bar.timeMs in -5_000..recentWindow) {
+                    latestContinuousPrice[key.first] = bar.close to now()
+                    priceMatchers[key.first]?.chart(bar.close, now())
+                    updatePriceRoute(key.first)
+                }
             }
         }
+        if (page.priceMonitor) return
         page.load.accept(incoming, historical, endOfHistory, incoming.size == chart.array("bars").size, countForBackfill = !page.liveOnly)
         val bars = page.load.candles
         // A cached chart still reading the bars it lacks would draw the live bar right after its stale last one.
