@@ -27,10 +27,14 @@ jobs:
           --tests '*DesktopWorkspaceSessionStoreTest*'
           --tests '*TradingPreferencesTest*'
           --tests '*ReplayRecordsTest*'
+          --tests '*ReplayRiskTest*'
+          --tests '*ReplayDailyRiskTest*'
+          --tests '*ReplaySetupUiTest*'
           --tests '*SettingsPageTest.desktopExitSavingSwitchStartsOnAndCanBeChanged*'
           --tests '*ReplayRecordDeleteUiTest*'
           --tests '*ReplayDailyLossUiTest*'
           --tests '*ReplayConsistencyUiTest*'
+          --tests '*HistoricalReplayUiTest.setupRestrictsReplaySymbolsAndUsesTheRequestedDates*'
           --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
@@ -63,11 +67,11 @@ jobs:
           if (-not (Test-Path "$app/UniTrading.exe")) { throw 'Windows executable missing' }
           if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host missing' }
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-Exit-Replay-Windows-x64.zip'
+          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-Replay-Daily-Rules-Windows-x64.zip'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Exit-Replay-Windows-x64
-          path: dist/UniTrading-Exit-Replay-Windows-x64.zip
+          name: Replay-Daily-Rules-Windows-x64
+          path: dist/UniTrading-Replay-Daily-Rules-Windows-x64.zip
           compression-level: 0
           if-no-files-found: error
   android:
@@ -86,9 +90,14 @@ jobs:
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - name: Build isolated Android preview
-        run: ./gradlew :androidApp:assembleStandardDebug -PpreviewBuild=true --no-daemon
+        run: ./gradlew :androidApp:assembleStandardDebug -PcredentialStoreTest=true --no-daemon
+      - name: Verify preview application ID
+        run: |
+          apk=androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
+          aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$aapt" dump badging "$apk" | grep -F "package: name='com.unitrading.demo.credentialtest'"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Exit-Replay-Android-preview
+          name: Replay-Daily-Rules-Android-preview
           path: androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
           if-no-files-found: error
