@@ -1,0 +1,14 @@
+name: Check GeckoView release metadata
+on:
+  push:
+    branches: ['build/check-gecko-v1-8-20261125']
+permissions:
+  contents: read
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read official release metadata
+        run: |
+          curl -fsSL https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview-arm64-v8a/maven-metadata.xml -o /tmp/gecko.xml
+          python3 -c "import xml.etree.ElementTree as e; r=e.parse('/tmp/gecko.xml').getroot(); print('release:', r.findtext('versioning/release')); print('latest:', r.findtext('versioning/latest')); print('updated:', r.findtext('versioning/lastUpdated')); print('recent:', ', '.join((x.text or '') for x in r.findall('versioning/versions/version')[-5:]))"
