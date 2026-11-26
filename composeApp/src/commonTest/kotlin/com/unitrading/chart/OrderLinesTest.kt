@@ -66,6 +66,41 @@ class OrderLinesTest {
         assertEquals(EditableLine.Pending(entry), lines.single { it.price == 5_500_000_000L }.edit)
     }
 
+    @Test fun managedDraftProtectionDoesNotLockSubmittedOrdersOrPositions() {
+        val cashMode = all.copy(draftStopManaged = true, draftTargetManaged = true)
+        val draft = entry.request
+        val draftLines = orderLines(mes, emptyList(), null, emptyList(), draft, null, draft.entryPrice, null, cashMode)
+        assertNull(draftLines.single { it.tone == LineTone.STOP }.edit)
+        assertNull(draftLines.single { it.tone == LineTone.TARGET }.edit)
+        val pendingLines = pending(listOf(entry) + brackets, options = cashMode)
+        assertEquals(EditableLine.PendingProtection(entry, true, 5_490_000_000), pendingLines.single { it.tone == LineTone.STOP }.edit)
+        assertEquals(EditableLine.PendingProtection(entry, false, 5_510_000_000), pendingLines.single { it.tone == LineTone.TARGET }.edit)
+
+        val position = bare.copy(stopLoss = 5_490_000_000, takeProfit = 5_510_000_000,
+            stopLossOrderId = "702", takeProfitOrderId = "701")
+        val bound = brackets.map { it.copy(positionId = position.id, editable = true) }
+        val positionLines = orderLines(mes, listOf(position), position, bound, null, null, null, null, cashMode)
+        assertEquals(EditableLine.Protection(position, true, 5_490_000_000), positionLines.single { it.tone == LineTone.STOP }.edit)
+        assertEquals(EditableLine.Protection(position, false, 5_510_000_000), positionLines.single { it.tone == LineTone.TARGET }.edit)
+    }
+
+    @Test fun pendingParentKeepsStandaloneChildEditableWhenItsBracketsAreLocked() {
+        val locked = entry.copy(protectionEditable = false)
+        val target = brackets[0].copy(standaloneEditable = true)
+        val stop = brackets[1].copy(standaloneEditable = false)
+        val orders = listOf(locked, target, stop)
+        val lines = pending(orders, options = all.copy(draftStopManaged = true, draftTargetManaged = true))
+        assertEquals(3, lines.size, "A child represented on its parent is not drawn twice")
+        assertEquals(EditableLine.Standalone(target), lines.single { it.tone == LineTone.TARGET }.edit)
+        assertNull(lines.single { it.tone == LineTone.STOP }.edit, "A child the broker has not allowed stays locked")
+
+        val drag = LineDrag(EditableLine.Standalone(target), scale, 5_515_000_000)
+        val moving = pending(orders, drag).single { it.moving }
+        assertEquals(5_515_000_000, moving.price)
+        assertEquals(75_000_000, moving.pnl)
+        assertEquals(EditableLine.Standalone(target), moving.edit)
+    }
+
     @Test fun lockedBracketsStayVisibleWithTheirResultButCannotBeDragged() {
         for ((orders, options) in listOf(listOf(entry.copy(protectionEditable = false)) to all, listOf(entry.copy(editable = false)) to all,
             listOf(entry) to all.copy(editPendingProtection = false))) {

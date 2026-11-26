@@ -441,16 +441,33 @@ internal class AccountRiskController(
                         // at its price loses more, so no number of edits of the leg takes it past the amount. A leg made
                         // smaller at the same price always passes, and cancelling one is never refused. A new stop placed
                         // beside it, or in its place once it is cancelled, is a protective stop, which the amounts do not hold.
-                        OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> if (!rule.brackets.enabled) null else
-                            snapshot.positions.firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
+                        OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> if (!rule.brackets.enabled) null else {
+                            val stop = order.role == OrderRole.STOP_LOSS
+                            val parents = snapshot.orders.filter { parent -> parent.role == OrderRole.ENTRY &&
+                                (if (stop) parent.stopLossOrderId else parent.takeProfitOrderId) == order.id }
+                            val parentError = when {
+                                parents.size > 1 -> "保护订单关联不明确，请刷新后重试"
+                                parents.any { it.request.symbol != order.request.symbol || it.request.side == order.request.side } ->
+                                    "保护订单与入场单不匹配，请刷新后重试"
+                                else -> parents.singleOrNull()?.let { parent ->
+                                    // A child displayed on a submitted entry can also be edited on its own when the
+                                    // broker explicitly permits it. Check its full remaining quantity against the
+                                    // original entry too, including when there is not yet an open position.
+                                    fun leg(price: Long?, lots: Long) = parent.request.copy(lotsHundredths = lots,
+                                        stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
+                                    amounts(leg(order.request.entryPrice, order.remainingLots),
+                                        leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
+                                }
+                            }
+                            parentError ?: snapshot.positions.firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
                                 val was = order.request.entryPrice
                                 val costlier = was == null || if (held.side == Side.BUY) action.price < was else action.price > was
                                 if (!costlier && !effect.grows) return@let null
-                                val stop = order.role == OrderRole.STOP_LOSS
                                 fun leg(price: Long?, lots: Long) = OrderRequest(held.symbol, held.side, OrderKind.MARKET, minOf(lots, held.lotsHundredths),
                                     held.entryPrice, stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
                                 amounts(leg(was, order.remainingLots), leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
                             }
+                        }
                         OrderRole.UNRESOLVED -> null
                     }
             }
@@ -507,6 +524,18 @@ internal class AccountRiskController(
     private suspend fun reserved(key: Pair<String, String>) = storageMutex.withLock { key in bulkTargets }
 
     fun guard(broker: BrokerPlugin, raw: AccountSession): AccountSession = object : AccountSession by raw {
+        /** Show the same local restriction in the editor that the command will check again on submission. */
+        private fun withRisk(preview: OrderPreview, check: RiskCheck): OrderPreview {
+            val reason = refusal(broker, raw, check) ?: return preview
+            return if (reason in preview.errors) preview else preview.copy(errors = preview.errors + reason)
+        }
+
+        override fun previewOrderProtection(orderId: String, stopLoss: Long?, takeProfit: Long?): OrderPreview =
+            withRisk(raw.previewOrderProtection(orderId, stopLoss, takeProfit), RiskCheck.OrderStop(orderId, stopLoss, takeProfit))
+
+        override fun previewOrderChange(orderId: String, price: Long, lotsHundredths: Long): OrderPreview =
+            withRisk(raw.previewOrderChange(orderId, price, lotsHundredths), RiskCheck.Change(orderId, price, lotsHundredths))
+
         /** [check] is null for a close or a cancel, which no rule stops. */
         private suspend fun submit(check: RiskCheck?, action: suspend () -> TradeResult): TradeResult {
             val key = broker.descriptor.id to account.id

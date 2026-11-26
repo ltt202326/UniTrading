@@ -214,15 +214,26 @@ internal fun orderLines(
             // The entry's own stop loss and take profit, measured from the entry (or from where its line is being dragged).
             val entry = if (dragged) price else base
             listOf(true to request.stopLoss, false to request.takeProfit).forEach { (stop, bracket) ->
-                val draggedBracket = (moving as? EditableLine.PendingProtection)?.takeIf { it.order.id == order.id && it.stop == stop } != null
-                val at = (if (draggedBracket) drag!!.price else bracket) ?: return@forEach
                 val editable = options.editPendingProtection && order.editable && order.protectionEditable
-                val bracketPnl = estimatedExitPnl(instrument, request.side, request.lotsHundredths, entry, at)
                 val bracketOrder = orders.firstOrNull { it.id == if (stop) order.stopLossOrderId else order.takeProfitOrderId }
+                // The child is hidden as a separate line while its price is shown on the entry. If the parent no longer
+                // supports a bracket edit, preserve the broker's explicitly allowed standalone edit of that child.
+                val standalone = bracketOrder?.takeIf {
+                    !editable && it.standaloneEditable && it.request.kind != OrderKind.MARKET && it.request.entryPrice != null
+                }
+                val draggedBracket = when (moving) {
+                    is EditableLine.PendingProtection -> moving.order.id == order.id && moving.stop == stop
+                    is EditableLine.Standalone -> moving.order.id == standalone?.id
+                    else -> false
+                }
+                val at = (if (draggedBracket) drag!!.price else standalone?.request?.entryPrice ?: bracket) ?: return@forEach
+                val quantity = standalone?.request?.lotsHundredths ?: request.lotsHundredths
+                val bracketPnl = estimatedExitPnl(instrument, request.side, quantity, entry, at)
                 val removal = bracketOrder?.let(LineAction::CancelOrder) ?: LineAction.RemovePendingProtection(order, stop).takeIf { options.removeProtection && editable }
-                add(OrderLine(at, protectionCells(instrument, stop, bracketPnl, !instrument.estimatesIncludeFees, request.lotsHundredths, removal,
+                add(OrderLine(at, protectionCells(instrument, stop, bracketPnl, !instrument.estimatesIncludeFees, quantity, removal,
                     bracketOrder?.let { cancelHint(instrument, it) } ?: "移除${protectionName(stop)}"),
-                    protectionTone(stop), alpha = .8f, edit = if (editable && bracket != null) EditableLine.PendingProtection(order, stop, bracket) else null,
+                    protectionTone(stop), alpha = .8f,
+                    edit = if (editable && bracket != null) EditableLine.PendingProtection(order, stop, bracket) else standalone?.let(EditableLine::Standalone),
                     pnl = bracketPnl, gross = !instrument.estimatesIncludeFees, moving = draggedBracket))
             }
         }

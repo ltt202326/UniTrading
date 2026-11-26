@@ -751,6 +751,42 @@ class AccountRiskTest {
             "change:entry:549000:100", "protect:held:548500:552000", "modify:own-stop:546000", "protect-order:sized:548000:549025"), broker.events)
     }
 
+    @Test fun standaloneChildrenOfAnUnfilledEntryStillRespectCashAmounts() = runTest {
+        val broker = RiskFixture()
+        val risk = controller()
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
+        val parent = riskOrder("entry", Side.BUY, OrderKind.LIMIT, 100, 549_000, stop = 547_000, target = 553_000)
+            .copy(protectionEditable = false, stopLossOrderId = "sl", takeProfitOrderId = "tp")
+        val sl = riskOrder("sl", Side.SELL, OrderKind.STOP, 100, 547_000, OrderRole.STOP_LOSS).copy(standaloneEditable = true)
+        val tp = riskOrder("tp", Side.SELL, OrderKind.LIMIT, 100, 553_000, OrderRole.TAKE_PROFIT).copy(standaloneEditable = true)
+        broker.hold("100", orders = listOf(parent, sl, tp))
+        val raw = broker.openSession("100")
+        val previewable = object : AccountSession by raw {
+            override fun previewOrderChange(orderId: String, price: Long, lotsHundredths: Long) = OrderPreview(price)
+            override fun previewOrderProtection(orderId: String, stopLoss: Long?, takeProfit: Long?) = OrderPreview(549_000)
+        }
+        val session = risk.guard(broker, previewable)
+        val loss = "修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量"
+        val profit = "修改后的预估利润低于子账户设置；止盈只能设得更远"
+
+        assertTrue(session.previewOrderChange("sl", 548_000, 100).valid)
+        assertTrue(session.changeOrder("tighten", "sl", sl.version, 548_000, 100).accepted)
+        assertEquals(listOf(loss), session.previewOrderChange("sl", 546_975, 100).errors)
+        assertEquals(loss, session.changeOrder("loosen", "sl", sl.version, 546_975, 100).message)
+        assertTrue(session.previewOrderChange("tp", 554_000, 100).valid)
+        assertTrue(session.changeOrder("further", "tp", tp.version, 554_000, 100).accepted)
+        assertEquals(listOf(profit), session.previewOrderChange("tp", 552_975, 100).errors)
+        assertEquals(profit, session.changeOrder("nearer", "tp", tp.version, 552_975, 100).message)
+
+        assertEquals(listOf(loss), session.previewOrderProtection("entry", 546_975, 553_000).errors)
+        assertTrue(session.previewOrderProtection("entry", 548_000, 553_000).valid)
+        broker.hold("100", orders = listOf(parent, parent.copy(id = "other"), sl, tp))
+        assertEquals("保护订单关联不明确，请刷新后重试", session.changeOrder("ambiguous", "sl", sl.version, 548_000, 100).message)
+        broker.hold("100", orders = listOf(parent.copy(request = parent.request.copy(symbol = "OTHER")), sl, tp))
+        assertEquals("保护订单与入场单不匹配，请刷新后重试", session.changeOrder("mismatch", "sl", sl.version, 548_000, 100).message)
+        assertEquals(listOf("change:sl:548000:100", "change:tp:554000:100"), broker.events)
+    }
+
     @Test fun aStopOrTargetChangedOnItsOwnIsHeldToTheAmountsWhereItMovesToCostThePosition() = runTest {
         val broker = RiskFixture()
         val risk = controller()
