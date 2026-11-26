@@ -170,6 +170,18 @@ internal data class AccountBrackets(
         }
     }
 
+    /**
+     * Cash brackets set the initial prices, but after submission the user may change those prices freely. Removing a
+     * configured leg remains a separate operation, and risk-sized orders keep their existing stop-risk restriction.
+     * Entry-price and quantity edits still use [editRefusal]. Broker price, direction and state checks also still apply.
+     */
+    fun protectionEditRefusal(before: OrderRequest, after: OrderRequest, spec: Instrument, currency: String): String? {
+        if (sizingRisk != null) return editRefusal(before, after, spec, currency)
+        if (loss != null && before.stopLoss != null && after.stopLoss == null) return "该子账户设有风险金额，止损不能移除"
+        if (profit != null && before.takeProfit != null && after.takeProfit == null) return "该子账户设有利润金额，止盈不能移除"
+        return null
+    }
+
     private fun checkCurrency(spec: Instrument, currency: String) {
         require(spec.currency.equals(currency, ignoreCase = true)) { "合约与子账户币种不同，无法换算金额止损止盈" }
     }

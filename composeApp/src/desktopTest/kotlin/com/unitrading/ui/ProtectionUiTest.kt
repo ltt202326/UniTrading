@@ -255,27 +255,27 @@ class ProtectionUiTest {
         assertEquals(0, broker.protectionCalls)
     }
 
-    @Test fun cashProtectionCanBeEditedAfterEntryWithinTheConfiguredAmounts() {
+    @Test fun submittedCashProtectionCanBeEditedBeyondTheConfiguredAmounts() {
         val broker = OfflineProtectionBroker()
         render(broker, brackets = AccountBrackets(loss = 50_000_000, profit = 100_000_000))
         compose.onNodeWithTag("trade-terminal").performScrollToKey("position-100:200")
         compose.onNodeWithTag("protect-position-100:200").performClick()
         val sl = compose.onNodeWithTag("protect-sl")
-        val tp = compose.onNodeWithTag("protect-tp")
         val confirm = compose.onNodeWithTag("confirm-protection")
         sl.performTextReplacement("5489.75")
-        compose.onNodeWithTag("protection-risk-error").assertTextContains("预估亏损超出")
-        confirm.assertIsNotEnabled()
-        sl.performTextReplacement("5490.00")
-        tp.performTextReplacement("5519.75")
-        compose.onNodeWithTag("protection-risk-error").assertTextContains("预估利润低于")
-        confirm.assertIsNotEnabled()
-        tp.performTextReplacement("5520.25")
         compose.onNodeWithTag("protection-risk-error").assertDoesNotExist()
         assertEquals(0, broker.protectionCalls)
         confirm.assertIsEnabled().performClick()
         compose.waitUntil(5000) { broker.protectionCalls == 1 }
-        assertEquals(549000L to 552025L, broker.lastProtection)
+        assertEquals(548975L to 552000L, broker.lastProtection)
+
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("position-100:200")
+        compose.onNodeWithTag("protect-position-100:200").performClick()
+        compose.onNodeWithTag("protect-tp").performTextReplacement("5519.75")
+        compose.onNodeWithTag("protection-risk-error").assertDoesNotExist()
+        compose.onNodeWithTag("confirm-protection").assertIsEnabled().performClick()
+        compose.waitUntil(5000) { broker.protectionCalls == 2 }
+        assertEquals(548975L to 551975L, broker.lastProtection)
     }
     @Test fun aDropPastTheMarketNeverReachesTheBrokerWhenConfirmationsAreSkipped() {
         val broker = OfflineProtectionBroker()

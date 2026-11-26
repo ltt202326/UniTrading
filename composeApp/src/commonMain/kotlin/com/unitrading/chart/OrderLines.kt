@@ -219,7 +219,10 @@ internal fun orderLines(
                 // The child is hidden as a separate line while its price is shown on the entry. If the parent no longer
                 // supports a bracket edit, preserve the broker's explicitly allowed standalone edit of that child.
                 val standalone = bracketOrder?.takeIf {
-                    !editable && it.standaloneEditable && it.request.kind != OrderKind.MARKET && it.request.entryPrice != null
+                    !editable && it.standaloneEditable && it.role == (if (stop) OrderRole.STOP_LOSS else OrderRole.TAKE_PROFIT)
+                }?.takeIf {
+                    it.request.symbol == request.symbol && it.request.side != request.side && it.request.entryPrice != null &&
+                        it.request.kind == (if (stop) OrderKind.STOP else OrderKind.LIMIT)
                 }
                 val draggedBracket = when (moving) {
                     is EditableLine.PendingProtection -> moving.order.id == order.id && moving.stop == stop

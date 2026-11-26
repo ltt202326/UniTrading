@@ -101,7 +101,7 @@ internal fun AccountBracketSettings(controller: AccountRiskController, broker: B
                     isError = profit.isNotBlank() && profitValue == null)
                 Text("留空可关闭对应设置。" + reductions("减仓单不附加止损止盈。") + "金额按毛盈亏估算，未计手续费与成交滑点。",
                     style = type.bodySmall, color = muted)
-                Text("提交后可在券商支持时修改止损止盈；修改仍受账户金额风控限制。", style = type.bodySmall, color = muted)
+                Text("提交后可在券商支持时修改止损止盈，修改后的价格不受上述金额限制。", style = type.bodySmall, color = muted)
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = type.bodySmall) }
         }

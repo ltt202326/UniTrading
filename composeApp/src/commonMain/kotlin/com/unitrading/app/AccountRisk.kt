@@ -395,10 +395,11 @@ internal class AccountRiskController(
             if (covered) EXITS_COVER_POSITION else it.trimEnd('。') + stillAllowed(hedging)
         }
         /** The cash amounts, for a pending entry or a position that an edit turns from [before] into [after]. */
-        fun amounts(before: OrderRequest, after: OrderRequest): String? {
+        fun amounts(before: OrderRequest, after: OrderRequest, protectionPriceEdit: Boolean = false): String? {
             if (!rule.brackets.enabled) return null
             val spec = broker.instruments.firstOrNull { it.symbol == before.symbol } ?: return "合约规格尚未加载"
-            return rule.brackets.editRefusal(before, after, spec, session.account.currency)
+            return if (protectionPriceEdit) rule.brackets.protectionEditRefusal(before, after, spec, session.account.currency)
+            else rule.brackets.editRefusal(before, after, spec, session.account.currency)
         }
         /**
          * With the brackets on, what an edit that raises [order] would open without a stop: lots past the position, of an
@@ -435,14 +436,11 @@ internal class AccountRiskController(
                             amounts(order.request, changed.copy(entryPrice = action.price,
                                 stopLoss = changed.stopLoss?.plus(shift), takeProfit = changed.takeProfit?.plus(shift)))
                         }
-                        // A stop or a target changed on its own. Its price is held to the amounts like the protection of the
-                        // position, from the position's entry for no more lots than the position has, where it moves to cost
-                        // the position more, down for a long and up for a short, or where it takes more lots: a stop raised
-                        // at its price loses more, so no number of edits of the leg takes it past the amount. A leg made
-                        // smaller at the same price always passes, and cancelling one is never refused. A new stop placed
-                        // beside it, or in its place once it is cancelled, is a protective stop, which the amounts do not hold.
+                        // The price of a submitted cash-protection leg is free to move. When quantity also changes,
+                        // compare the resulting exposure to the original amount as before; risk-sizing rules still apply.
                         OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> if (!rule.brackets.enabled) null else {
                             val stop = order.role == OrderRole.STOP_LOSS
+                            val priceOnly = changed.lotsHundredths == order.request.lotsHundredths
                             val parents = snapshot.orders.filter { parent -> parent.role == OrderRole.ENTRY &&
                                 (if (stop) parent.stopLossOrderId else parent.takeProfitOrderId) == order.id }
                             val parentError = when {
@@ -451,12 +449,12 @@ internal class AccountRiskController(
                                     "保护订单与入场单不匹配，请刷新后重试"
                                 else -> parents.singleOrNull()?.let { parent ->
                                     // A child displayed on a submitted entry can also be edited on its own when the
-                                    // broker explicitly permits it. Check its full remaining quantity against the
-                                    // original entry too, including when there is not yet an open position.
+                                    // broker explicitly permits it. Quantity changes are still checked against the
+                                    // original entry, including when there is not yet an open position.
                                     fun leg(price: Long?, lots: Long) = parent.request.copy(lotsHundredths = lots,
                                         stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
                                     amounts(leg(order.request.entryPrice, order.remainingLots),
-                                        leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
+                                        leg(action.price, changed.lotsHundredths - order.filledLotsHundredths), priceOnly)
                                 }
                             }
                             parentError ?: snapshot.positions.firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
@@ -465,7 +463,7 @@ internal class AccountRiskController(
                                 if (!costlier && !effect.grows) return@let null
                                 fun leg(price: Long?, lots: Long) = OrderRequest(held.symbol, held.side, OrderKind.MARKET, minOf(lots, held.lotsHundredths),
                                     held.entryPrice, stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
-                                amounts(leg(was, order.remainingLots), leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
+                                amounts(leg(was, order.remainingLots), leg(action.price, changed.lotsHundredths - order.filledLotsHundredths), priceOnly)
                             }
                         }
                         OrderRole.UNRESOLVED -> null
@@ -474,13 +472,13 @@ internal class AccountRiskController(
             is RiskCheck.PositionStop -> snapshot.positions.firstOrNull { it.id == action.positionId }.let { position ->
                 paused(position != null && !stopLoosened(position.side, position.stopLoss, action.stopLoss)) ?: position?.let {
                     val held = OrderRequest(it.symbol, it.side, OrderKind.MARKET, it.lotsHundredths, it.entryPrice, it.stopLoss, it.takeProfit)
-                    amounts(held, held.copy(stopLoss = action.stopLoss, takeProfit = action.takeProfit))
+                    amounts(held, held.copy(stopLoss = action.stopLoss, takeProfit = action.takeProfit), protectionPriceEdit = true)
                 }
             }
             is RiskCheck.OrderStop -> snapshot.orders.firstOrNull { it.id == action.orderId }.let { order ->
                 paused(order != null && !stopLoosened(order.request.side, order.request.stopLoss, action.stopLoss))
                     ?: order?.takeIf { it.role == OrderRole.ENTRY }?.let {
-                        amounts(it.request, it.request.copy(stopLoss = action.stopLoss, takeProfit = action.takeProfit))
+                        amounts(it.request, it.request.copy(stopLoss = action.stopLoss, takeProfit = action.takeProfit), protectionPriceEdit = true)
                     }
             }
         }

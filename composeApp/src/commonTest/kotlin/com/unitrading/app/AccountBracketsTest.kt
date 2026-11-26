@@ -188,4 +188,21 @@ class AccountBracketsTest {
         assertEquals("无法复核子账户止损止盈", edit(order.copy(stopLoss = 0)))
         assertNull(AccountBrackets().editRefusal(order, bare, futures, "USD"))
     }
+
+    @Test fun submittedCashProtectionPricesAreFreeButRemovalAndRiskSizingStayGuarded() {
+        val cash = AccountBrackets(loss = 50_000_000, profit = 100_000_000)
+        val sizing = AccountBrackets(sizingRisk = 50_000_000, sizingMaxLots = 1_000)
+        val short = OrderRequest("MES", Side.SELL, OrderKind.LIMIT, 100, 551_000, stopLoss = 552_000, takeProfit = 549_000)
+        val long = short.copy(side = Side.BUY, stopLoss = 550_000, takeProfit = 553_000)
+        for (before in listOf(short, long)) {
+            val stop = before.stopLoss!! + if (before.side == Side.BUY) -25 else 25
+            val target = before.takeProfit!! + if (before.side == Side.BUY) -25 else 25
+            assertNull(cash.protectionEditRefusal(before, before.copy(stopLoss = stop), futures, "USD"))
+            assertNull(cash.protectionEditRefusal(before, before.copy(takeProfit = target), futures, "USD"))
+            assertEquals("该子账户设有风险金额，止损不能移除", cash.protectionEditRefusal(before, before.copy(stopLoss = null), futures, "USD"))
+            assertEquals("该子账户设有利润金额，止盈不能移除", cash.protectionEditRefusal(before, before.copy(takeProfit = null), futures, "USD"))
+            assertEquals("修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量",
+                sizing.protectionEditRefusal(before, before.copy(stopLoss = stop), futures, "USD"))
+        }
+    }
 }

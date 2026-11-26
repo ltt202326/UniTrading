@@ -4,13 +4,13 @@
 
 - Android、iOS 和平板长按图表空白处时，可从菜单重置图表视图；平板保留单独的重置视图按钮。
 - 移除各平台图表顶部重复的蓝色连续合约说明，行情和下单面板中的合约信息保留。
-- 修复已提交挂单的止损止盈子单可单独修改时，图表可能隐藏其改单入口的问题；金额风控的限制会在改单确认前提示。
+- 使用金额止盈止损时，提交后可修改止盈止损价，不再受设置金额限制；修复图表可能隐藏已提交保护子单独立改单入口的问题。
 
 ## English
 
 - Reset the chart view from the long-press menu on Android, iOS, and tablets; tablets also keep a dedicated reset button.
 - Remove the redundant blue continuous-contract banner above charts on all platforms; contract details remain in the watchlist and order panel.
-- Fix a chart that could hide an editable protection-order child of a submitted entry; show account cash-risk restrictions before confirming a protection edit.
+- Allow protection prices created by cash amounts to be edited after submission without the original cash limits; restore standalone editing for eligible protection-order children hidden on the chart.
 
 # v1.8.1
 
