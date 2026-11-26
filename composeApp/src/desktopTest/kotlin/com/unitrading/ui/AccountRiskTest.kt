@@ -785,6 +785,20 @@ class AccountRiskTest {
         assertEquals(listOf("change:sl:548000:100", "change:sl:546975:100", "change:tp:554000:100", "change:tp:552975:100"), broker.events)
     }
 
+    @Test fun allowingCashPriceEditsDoesNotBypassTheDailyTradingLock() = runTest {
+        val broker = RiskFixture()
+        val risk = controller(clock = broker.clock)
+        val session = risk.guard(broker, broker.openSession("100"))
+        broker.hold("100", listOf(riskPosition(Side.BUY, 100, stop = 548_000, target = 554_000)))
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
+        assertNull(risk.configure(broker, "100", RiskLimits(loss = 200_000_000)))
+        broker.pnl("100", -250_000_000)
+        assertFalse(session.modifyProtection("loosen-while-locked", "held", 1, 547_975, 554_000).accepted)
+        assertTrue(session.modifyProtection("tighten-while-locked", "held", 1, 549_000, 554_000).accepted)
+        assertTrue(session.modifyProtection("target-while-locked", "held", 1, 548_000, 553_975).accepted)
+        assertEquals(listOf("protect:held:549000:554000", "protect:held:548000:553975"), broker.events)
+    }
+
     @Test fun standaloneProtectionPricesCanChangeButQuantityEditsStillFollowRiskLimits() = runTest {
         val broker = RiskFixture()
         val risk = controller()
