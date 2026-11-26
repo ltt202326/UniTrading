@@ -1,0 +1,75 @@
+name: Windows and Android previews
+on:
+  push:
+    branches: ['build/protection-price-preview-20261126']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 48cff5d6f16b7a22d1d4b825a81731a9a82cb82b
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Build signed debug APKs
+        run: ./gradlew :androidApp:assembleStandardDebug :androidApp:assembleGeckoDebug --no-daemon
+      - name: Verify APK signatures and prepare files
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
+          mkdir -p dist
+          cp androidApp/build/outputs/apk/standard/debug/*.apk dist/UniTrading-protection-Android-standard-debug.apk
+          cp androidApp/build/outputs/apk/gecko/debug/*.apk dist/UniTrading-protection-Android-webview-debug.apk
+          "$BUILD_TOOLS/apksigner" verify --print-certs dist/UniTrading-protection-Android-standard-debug.apk
+          "$BUILD_TOOLS/apksigner" verify --print-certs dist/UniTrading-protection-Android-webview-debug.apk
+          sha256sum dist/*.apk
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Protection-Android-APKs
+          path: dist/*.apk
+          if-no-files-found: error
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 48cff5d6f16b7a22d1d4b825a81731a9a82cb82b
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Build Windows distribution
+        run: ./gradlew.bat :composeApp:createDistributable --no-daemon
+      - name: Verify and archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = 'composeApp/build/compose/binaries/main/app/UniTrading'
+          if (-not (Test-Path "$app/UniTrading.exe")) { throw 'Windows executable missing' }
+          if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host missing' }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-protection-Windows-x64.zip'
+          Get-FileHash 'dist/UniTrading-protection-Windows-x64.zip' -Algorithm SHA256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Protection-Windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
