@@ -1,0 +1,35 @@
+name: Centered replay Android preview
+on:
+  push:
+    branches: ['build/centered-replay-preview-20261127']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Build independent tablet test APK
+        run: ./gradlew :androidApp:assembleStandardDebug -PcredentialStoreTest=true --no-daemon
+      - name: Verify test package signature
+        run: |
+          apk=androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
+          tools_dir=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          "$tools_dir/aapt2" dump badging "$apk" | grep "package: name='com.unitrading.demo.credentialtest'"
+          "$tools_dir/apksigner" verify --verbose "$apk"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: centered-replay-android-test
+          path: androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
+          if-no-files-found: error
