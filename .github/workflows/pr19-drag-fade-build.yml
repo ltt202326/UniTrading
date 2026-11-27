@@ -1,0 +1,118 @@
+name: PR19 drag and replay test package
+on:
+  push:
+    branches: ['build/pr19-drag-fade-20261127']
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: d95e2fff01444ee1ab95a6e56264db23ba444cec
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Package Windows app
+        shell: pwsh
+        run: |
+          ./gradlew.bat :composeApp:createDistributable --no-daemon
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host 'Retrying after a build dependency resolution failure'
+            ./gradlew.bat :composeApp:createDistributable --no-daemon --refresh-dependencies
+            if ($LASTEXITCODE -ne 0) { throw 'Windows package build failed' }
+          }
+      - name: Build MSI installer
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          ./gradlew.bat :composeApp:packageMsi --no-daemon
+          if ($LASTEXITCODE -ne 0) { throw 'MSI packaging failed; portable package remains available' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UniTrading-PR19-drag-fade-MSI
+          path: composeApp/build/compose/binaries/main/msi/*.msi
+          if-no-files-found: warn
+      - name: Verify packaged executable and local demo launch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = (Resolve-Path 'composeApp/build/compose/binaries/main/app/UniTrading').Path
+          $exe = Join-Path $app 'UniTrading.exe'
+          $hostExe = Join-Path $app 'app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe'
+          if (-not (Test-Path $exe)) { throw 'Windows executable missing' }
+          if (-not (Test-Path $hostExe)) { throw 'Tradovate login host missing' }
+          if (-not ((Get-Content 'androidApp/build.gradle.kts' -Raw) -match 'versionName\s*=\s*"([^"]+)"')) { throw 'versionName not found' }
+          $expected = $Matches[1]
+          $packaged = (Get-Item $exe).VersionInfo.ProductVersion
+          if ($packaged -ne $expected) { throw "Unexpected packaged version $packaged, expected $expected" }
+          Write-Host "Packaged version: $packaged"
+          $hostResult = & $hostExe --self-test | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "Login host self-test failed: $hostResult" }
+          Write-Host "Login host self-test: $hostResult"
+          $env:UNITRADING_DATA_DIR = Join-Path $env:RUNNER_TEMP 'unitrading-pr19-smoke'
+          $process = Start-Process -FilePath $exe -ArgumentList '--local-demo' -PassThru
+          $windowFound = $false
+          try {
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              $process.Refresh()
+              if ($process.HasExited) { throw "App exited during startup with code $($process.ExitCode)" }
+              if ($process.MainWindowHandle -ne 0) { Write-Host "Application window opened: $($process.MainWindowTitle)"; $windowFound = $true; break }
+            }
+            if (-not $windowFound) { Write-Warning 'Process stayed running but the Windows runner did not expose a window handle' }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-PR19-Drag-Fade-Windows-x64.zip'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UniTrading-PR19-Drag-Fade-Windows-x64
+          path: dist/UniTrading-PR19-Drag-Fade-Windows-x64.zip
+          compression-level: 0
+          if-no-files-found: error
+
+  desktop-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: d95e2fff01444ee1ab95a6e56264db23ba444cec
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Verify drawing synchronization and replay
+        run: |
+          xvfb-run -a ./gradlew :composeApp:desktopTest --no-daemon --max-workers=2 \
+            --tests 'com.unitrading.app.DrawingSyncTest' \
+            --tests 'com.unitrading.chart.drawing.ChartDrawingsTest' \
+            --tests 'com.unitrading.app.ChartUndoCoordinatorTest' \
+            --tests 'com.unitrading.ui.ChartWindowsUiTest.drawingSyncMenuChangesOnlyNewDrawings' \
+            --tests 'com.unitrading.ui.ChartWindowsUiTest.favoritesFloatAcrossSplitChartsAndTargetTheSelectedChart' \
+            --tests 'com.unitrading.ui.HistoricalReplayUiTest.pickingReplayStartRequiresConfirmationAndBlocksOrders'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: UniTrading-drawing-sync-test-results
+          path: |
+            composeApp/build/reports/tests/desktopTest
+            artifacts/tablet-replay/desktop-replay-gradient.png
+          if-no-files-found: warn
