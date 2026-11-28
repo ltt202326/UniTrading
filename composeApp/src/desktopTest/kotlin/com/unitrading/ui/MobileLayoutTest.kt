@@ -70,8 +70,8 @@ class MobileLayoutTest {
         compose.onNodeWithTag("trading-chart").assertExists()
         compose.onNodeWithTag("nav-0").performClick()
         compose.onNodeWithTag("market-reference-TESTZ6", useUnmergedTree = true).assertDoesNotExist()
-        compose.onNodeWithContentDescription("Bid 卖出 5500.00", useUnmergedTree = true).assertExists()
-        compose.onNodeWithContentDescription("Ask 买入 5500.25", useUnmergedTree = true).assertExists()
+        compose.onAllNodesWithContentDescription("Bid 卖出 5500.00", useUnmergedTree = true).onFirst().assertExists()
+        compose.onAllNodesWithContentDescription("Ask 买入 5500.25", useUnmergedTree = true).onFirst().assertExists()
         assertTrue(broker.placed.isEmpty())
     }
 
