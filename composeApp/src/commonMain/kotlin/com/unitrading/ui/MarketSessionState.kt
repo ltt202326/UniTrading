@@ -6,6 +6,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -13,10 +18,14 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.unitrading.broker.Instrument
+import com.unitrading.broker.BrokerEnvironment
+import com.unitrading.broker.MarketSnapshot
 import com.unitrading.broker.Quote
+import kotlinx.coroutines.delay
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
+import kotlin.time.Clock
 
 /** An inference for display only. It must never authorize an order or resolve a continuous contract. */
 internal enum class MarketSessionState(val label: String) {
@@ -49,6 +58,18 @@ internal fun marketSessionState(instrument: Instrument, quote: Quote?, connected
         return MarketSessionState.OPEN
     if (quote == null && nowMs - connectedAtMs < 15_000L) return MarketSessionState.WAITING
     return if (scheduledCmeClosed(instrument.symbol, nowMs) == true) MarketSessionState.CLOSED else MarketSessionState.DELAYED
+}
+
+/** Display-only session status for order forms; historical quotes never enter order previews. */
+@Composable
+internal fun rememberOrderMarketSession(instrument: Instrument, market: MarketSnapshot?, environment: BrokerEnvironment): MarketSessionState? {
+    if (market == null || environment == BrokerEnvironment.LOCAL_DEMO) return null
+    var now by remember(instrument.symbol, market.connected) { mutableLongStateOf(Clock.System.now().toEpochMilliseconds()) }
+    val connectedAt = remember(instrument.symbol, market.connected) { Clock.System.now().toEpochMilliseconds() }
+    LaunchedEffect(instrument.symbol, market.connected) {
+        while (market.connected) { now = Clock.System.now().toEpochMilliseconds(); delay(1_000) }
+    }
+    return marketSessionState(instrument, market.quotes[instrument.priceSymbol], market.connected, now, connectedAt)
 }
 
 @Composable

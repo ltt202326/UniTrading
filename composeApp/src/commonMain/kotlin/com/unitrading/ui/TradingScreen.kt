@@ -1585,7 +1585,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 onChartAdjust = if (popupVisible) dismissOrder else null,
                                 orderNotice = if (popupVisible) orderNotice else ({}),
                                 onDiscard = if (popupVisible) ({ closeOrder() }) else null,
-                                accountName = accountName, compactFloating = popupVisible && phoneScreen)
+                                accountName = accountName, compactFloating = popupVisible && phoneScreen, market = market)
                         }
                     }
                 }
@@ -2106,7 +2106,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 m.background(colors.Surface), environment = environment, capacity = capacity,
                                 onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
                                 onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request,
-                                accountName = accountName, floating = floating, compactFloating = tablet)
+                                accountName = accountName, floating = floating, compactFloating = tablet, market = market)
                         }
                         @Composable fun workspaceTerminal(target: String, m: Modifier) {
                             val (targetSession, targetSnapshot) = workspaceAccount(workspaceOf(target))
@@ -2389,7 +2389,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             OrderForm(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
                                                 ::reviewMobileOrder, Modifier.weight(1f),
                                                 environment = environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
-                                                brackets = brackets, bracketOrder = request)
+                                                brackets = brackets, bracketOrder = request,
+                                                marketSession = rememberOrderMarketSession(instrument, market, environment))
                                         },
                                         body = {
                                             Column(Modifier.fillMaxSize()) {
@@ -2427,7 +2428,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                                     },
                                                     brackets = brackets, bracketOrder = request,
                                                     // The minimized dock keeps its form; the notice shows above the chart meanwhile.
-                                                    orderNotice = if (orderOpen) orderNotice else ({}))
+                                                    orderNotice = if (orderOpen) orderNotice else ({}),
+                                                    marketSession = rememberOrderMarketSession(instrument, market, environment))
                                             }
                                         } else Column(Modifier.fillMaxSize()) { idleBar() }
                                     })

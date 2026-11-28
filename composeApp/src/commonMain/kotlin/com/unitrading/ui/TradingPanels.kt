@@ -104,6 +104,7 @@ internal fun OrderTicket(
     showEstimates: Boolean = true,
     floating: Boolean = false,
     compactFloating: Boolean = false,
+    market: MarketSnapshot? = null,
 ) {
     var advanced by remember(instrument.symbol) { mutableStateOf(false) }
     Column(modifier) {
@@ -120,7 +121,8 @@ internal fun OrderTicket(
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
             skipConfirmation, showKinds = true, detailsOpen = !compactFloating, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice,
             dockAdvanced = advanced, onDockAdvanced = if (compactFloating) ({ advanced = it }) else null,
-            showPriceExplanation = showPriceExplanation, showEstimates = showEstimates, quoteFirst = floating)
+            showPriceExplanation = showPriceExplanation, showEstimates = showEstimates, quoteFirst = floating,
+            marketSession = rememberOrderMarketSession(instrument, market, environment))
     }
 }
 

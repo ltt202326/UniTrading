@@ -56,12 +56,16 @@ internal fun OrderForm(
     showPriceExplanation: Boolean = true,
     showEstimates: Boolean = true,
     quoteFirst: Boolean = false,
+    marketSession: MarketSessionState? = null,
 ) {
     val colors = TradingColors
     val type = MaterialTheme.typography
     val focus = LocalFocusManager.current
     var details by remember(instrument.symbol) { mutableStateOf(detailsOpen) }
-    val error = if (instrument.isContinuous && instrument.executionSymbol == null) "${instrument.executionLabel}，暂不可下单"
+    val unresolvedContract = instrument.isContinuous && instrument.executionSymbol == null
+    val closedMessage = marketSession == MarketSessionState.CLOSED && (unresolvedContract || (preview == null && quote == null))
+    val error = if (closedMessage) "已关盘"
+        else if (unresolvedContract) "${instrument.executionLabel}，暂不可下单"
         else if (preview == null) "请输入有效数量与价格" else preview.errors.firstOrNull()
     val sizingRisk = brackets.sizingRisk
     val docked = onDockAdvanced != null
@@ -166,7 +170,9 @@ internal fun OrderForm(
         orderNotice()
         DividerLine()
         Column(Modifier.fillMaxWidth().testTag("order-actions").padding(horizontal = 16.dp, vertical = if (docked) 2.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (error != null) Text(error, color = colors.Loss, style = type.bodySmall, modifier = Modifier.testTag("order-error"))
+            if (error != null) Text(error, color = colors.Loss, style = type.bodySmall,
+                textAlign = if (closedMessage) TextAlign.Center else TextAlign.Start,
+                modifier = (if (closedMessage) Modifier.fillMaxWidth() else Modifier).testTag("order-error"))
             else if (!docked || dockAdvanced) Row(Modifier.fillMaxWidth().testTag("order-summary"), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("${draft.side.label()} · ${draft.kind.label()} · ${if (sizingRisk == null) draft.quantity else bracketOrder?.lotsHundredths?.let(instrument::formatQuantity) ?: "—"} ${instrument.quantityUnit}", style = type.bodySmall, color = colors.Muted)
                 Text(preview?.entryPrice?.let(instrument::formatPrice) ?: "—", style = type.titleSmall)
