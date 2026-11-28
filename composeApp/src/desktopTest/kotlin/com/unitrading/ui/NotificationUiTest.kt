@@ -59,14 +59,16 @@ class NotificationUiTest {
         }
     }
 
-    private fun render(broker: Broker, phone: Boolean = false, skipConfirmation: Boolean = false, layout: OrderPanelLayout = OrderPanelLayout.SHEET) {
+    private fun render(broker: Broker, phone: Boolean = false, skipConfirmation: Boolean = false, layout: OrderPanelLayout = OrderPanelLayout.SHEET,
+        platform: ChartPlatform = if (phone) ChartPlatform.ANDROID else ChartPlatform.DESKTOP,
+        width: Int = if (phone) 400 else 1400, height: Int = if (phone) 800 else 900) {
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker))
         runBlocking {
             runtime.theme.apply(ThemeSettings(ThemePreset.TRADINGV)); runtime.tradingPreferences.setSkipConfirmation(skipConfirmation)
             runtime.tradingPreferences.setOrderPanelLayout(layout)
         }
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.7f)) {
-            Box(Modifier.requiredSize(if (phone) 400.dp else 1400.dp, if (phone) 800.dp else 900.dp)) { TradingScreen(runtime) }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.7f), LocalChartPlatform provides platform) {
+            Box(Modifier.requiredSize(width.dp, height.dp).testTag("notification-test-host")) { TradingScreen(runtime) }
         } }
     }
     private fun chartBounds() = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().boundsInRoot
@@ -87,6 +89,9 @@ class NotificationUiTest {
         assertEquals(1, broker.orderCalls)
         assertEquals(before, chartBounds())
         val overlay = compose.onNodeWithTag("trade-notice-card").fetchSemanticsNode().boundsInRoot
+        val host = compose.onNodeWithTag("notification-test-host").fetchSemanticsNode().boundsInRoot
+        assertEquals(host.center.x, overlay.center.x, 2f)
+        assertEquals(host.center.y, overlay.center.y, 2f)
         val toolbar = compose.onNodeWithTag("app-toolbar").fetchSemanticsNode().boundsInRoot
         assertTrue(overlay.top > toolbar.bottom)
         capture("desktop-floating-notice")
@@ -94,6 +99,24 @@ class NotificationUiTest {
         compose.onNodeWithTag("trade-notice").assertDoesNotExist()
         assertEquals(before, chartBounds())
     }
+
+    private fun tabletNoticeIsCentered(platform: ChartPlatform, width: Int, height: Int) {
+        val broker = Broker().apply { failSync = true }
+        render(broker, platform = platform, width = width, height = height)
+        val before = chartBounds()
+        compose.onNodeWithTag("connection-status").performClick()
+        compose.onNodeWithTag("resynchronize-account").performClick()
+        val overlay = compose.onNodeWithTag("trade-notice-card").fetchSemanticsNode().boundsInRoot
+        val host = compose.onNodeWithTag("notification-test-host").fetchSemanticsNode().boundsInRoot
+        assertEquals(host.center.x, overlay.center.x, 2f)
+        assertEquals(host.center.y, overlay.center.y, 2f)
+        assertEquals(before, chartBounds())
+        compose.onNodeWithTag("dismiss-trade-notice").performClick()
+        compose.onNodeWithTag("trade-notice").assertDoesNotExist()
+    }
+
+    @Test fun androidTabletLandscapeNoticeIsCentered() = tabletNoticeIsCentered(ChartPlatform.ANDROID, 1024, 768)
+    @Test fun iPadPortraitNoticeIsCentered() = tabletNoticeIsCentered(ChartPlatform.IOS, 768, 1024)
 
     @Test fun connectionDetailsKeepSyncAccessibleAndFailuresStayUntilDismissed() {
         val broker = Broker().apply { failSync = true }

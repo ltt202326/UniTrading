@@ -131,9 +131,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
         // The pages in front of the trading screen have no notices of their own: an unread failure shows over them.
         val failureOverlay: @Composable BoxScope.() -> Unit = {
-            unreadFailures.firstOrNull()?.let { failure ->
-                FloatingNoticeCard(failureNotice(failure), "trade-notice", { runtime.accountRisk.acknowledge(failure) }, Modifier.align(Alignment.TopCenter)
-                    .safeDrawingPadding().padding(start = 12.dp, end = 12.dp, top = 56.dp).widthIn(max = 420.dp), title = "操作提示")
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val centered = LocalChartPlatform.current == ChartPlatform.DESKTOP || minOf(maxWidth, maxHeight) >= 600.dp
+                unreadFailures.firstOrNull()?.let { failure ->
+                    FloatingNoticeCard(failureNotice(failure), "trade-notice", { runtime.accountRisk.acknowledge(failure) },
+                        Modifier.align(if (centered) Alignment.Center else Alignment.TopCenter).safeDrawingPadding()
+                            .padding(start = 12.dp, end = 12.dp, top = if (centered) 0.dp else 56.dp).widthIn(max = 420.dp), title = "操作提示")
+                }
             }
         }
         if (plugin == null) {
@@ -984,7 +988,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 // The receipt inside the dock's and the popup's form; the sheet shows it above its form, as it always did.
                 val orderNotice: @Composable () -> Unit = {
-                    shownNotice()?.let { current ->
+                    shownNotice()?.takeUnless { desktopStyle }?.let { current ->
                         Box(Modifier.fillMaxWidth().heightIn(max = 96.dp).verticalScroll(rememberScrollState())
                             .padding(horizontal = 12.dp, vertical = 2.dp)) {
                             FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
@@ -1557,13 +1561,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "workspace-account-storage-notice", null,
                             title = "子窗口账户设置")
                     }
-                    shownNotice()?.takeUnless { panelOpen }?.let { current ->
+                    shownNotice()?.takeUnless { panelOpen || desktopStyle }?.let { current ->
                         FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
                     }
                     loginMessage?.let { message -> key(message) {
                         var dismissed by remember { mutableStateOf(false) }
                         if (!dismissed) FloatingNoticeCard(TradingNotice(0, message, persistent = true), "saved-login-status", { dismissed = true }, title = "登录状态")
                     } }
+                }
+                if (desktopStyle && !popupVisible) shownNotice()?.let { current ->
+                    FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) },
+                        Modifier.align(Alignment.Center).padding(horizontal = 12.dp).widthIn(max = 420.dp), title = "操作提示")
                 }
                 }
                 // Everything a trade or a chart can ask for in a dialog; it opens in the window the user is working in.
@@ -1574,6 +1582,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     // it, the draft stays on the chart and "下单" opens it again. Only "取消订单" drops it.
                     val dismissOrder: () -> Unit = { if (popupVisible) orderPanelState = MobileOrderPanelState.MINIMIZED else if (!busy) showOrder = false }
                     Dialog(onDismissRequest = dismissOrder) {
+                        Box {
                         Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                             OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
                                 if (popupVisible) reviewMobileOrder()
@@ -1586,6 +1595,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 orderNotice = if (popupVisible) orderNotice else ({}),
                                 onDiscard = if (popupVisible) ({ closeOrder() }) else null,
                                 accountName = accountName, compactFloating = popupVisible && phoneScreen, market = market, platformName = loginName)
+                        }
+                        if (popupVisible && desktopStyle) shownNotice()?.let { current ->
+                            FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) },
+                                Modifier.align(Alignment.Center).padding(horizontal = 12.dp).widthIn(max = 420.dp), title = "操作提示")
+                        }
                         }
                     }
                 }
@@ -2380,7 +2394,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         brackets = brackets, calculatedLots = request?.lotsHundredths, accountName = accountName,
                                         reduction = reduction,
                                         content = {
-                                            shownNotice()?.let { current ->
+                                            shownNotice()?.takeUnless { desktopStyle }?.let { current ->
                                                 Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
                                                     .padding(horizontal = 16.dp, vertical = 8.dp)) {
                                                     FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")

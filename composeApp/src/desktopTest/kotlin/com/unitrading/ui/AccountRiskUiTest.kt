@@ -35,7 +35,7 @@ private const val FAILED_100 = "离线测试账户 自动平仓未完成，请�
 @OptIn(ExperimentalTestApi::class)
 class AccountRiskUiTest {
     private fun ComposeUiTest.show(runtime: TradingRuntime, width: Int = 450, height: Int = 850) = setContent {
-        CompositionLocalProvider(LocalDensity provides Density(1f)) {
+        CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides if (width < 600) ChartPlatform.ANDROID else ChartPlatform.DESKTOP) {
             Box(Modifier.requiredSize(width.dp, height.dp)) { TradingScreen(runtime) }
         }
     }
