@@ -5,6 +5,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -193,7 +195,8 @@ internal fun WorkspaceTabStrip(
                         drag?.takeIf { it.id == tab.id }?.let { it.x += amount.x; it.y += amount.y }
                         change.consume()
                     }
-                }.clickable { onSelect(tab.id) }.testTag("workspace-tab-${tab.id}")
+                }.clickable(interactionSource = remember(tab.id) { MutableInteractionSource() },
+                    indication = if (active) null else LocalIndication.current) { onSelect(tab.id) }.testTag("workspace-tab-${tab.id}")
                 .semantics {
                     customActions = listOfNotNull(
                         CustomAccessibilityAction("向左移动 ${tab.symbol}") {

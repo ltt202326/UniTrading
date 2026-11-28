@@ -233,7 +233,7 @@ internal fun watchSubtitle(instrument: Instrument): String {
     return "连续 · $contract" + when {
         instrument.executionSymbol != null -> ""
         instrument.tradeSymbolStatus?.startsWith("正在核实主力") == true -> " · 核实中"
-        instrument.tradeSymbolStatus?.startsWith("收盘价匹配") == true -> " · 收盘匹配待确认"
+        instrument.tradeSymbolStatus?.startsWith("收盘价匹配") == true -> ""
         else -> " · 待确认"
     }
 }
@@ -301,7 +301,7 @@ internal fun MarketQuoteRow(
                     style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } }
             val isClosedReference = instrument.tradeSymbolStatus?.startsWith("收盘价匹配") == true
-            val time = quote?.let { (if (sessionState == MarketSessionState.OPEN && !isClosedReference) "" else "最后报价 ") + quoteTime(it.timeMs) } ?: "等待报价"
+            val time = if (quote == null) "等待报价" else if (sessionState == MarketSessionState.OPEN && !isClosedReference) quoteTime(quote.timeMs) else null
             val spread = "点差 ${quoteSpread(quote, instrument)} tick"
             if (stacked) {
                 symbol(Modifier.fillMaxWidth())
@@ -324,7 +324,7 @@ internal fun MarketQuoteRow(
 }
 
 @Composable
-private fun QuotePrice(label: String, price: String?, color: Color, detail: String, modifier: Modifier, stacked: Boolean) {
+private fun QuotePrice(label: String, price: String?, color: Color, detail: String?, modifier: Modifier, stacked: Boolean) {
     Column(modifier, horizontalAlignment = Alignment.End) {
         if (stacked) Text(label, color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -339,6 +339,6 @@ private fun QuotePrice(label: String, price: String?, color: Color, detail: Stri
                 color = color, style = MaterialTheme.typography.titleMedium.copy(fontSize = size.sp, lineHeight = (size + 4).sp), textAlign = TextAlign.End,
                 maxLines = 1, softWrap = false)
         }
-        Text(detail, color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        if (detail != null) Text(detail, color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }

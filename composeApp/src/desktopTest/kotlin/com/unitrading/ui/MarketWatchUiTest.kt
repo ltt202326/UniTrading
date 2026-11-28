@@ -68,6 +68,7 @@ class MarketWatchUiTest {
         compose.onNodeWithTag("market-reference-XAUUSD", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithContentDescription("Bid 卖出 3879.96", useUnmergedTree = true).assertExists()
         compose.onNodeWithContentDescription("Ask 买入 3880.08", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("最后报价", substring = true, useUnmergedTree = true).assertDoesNotExist()
     }
     private fun capture(name: String) {
         val target = File(System.getenv("UNITRADING_MARKET_ARTIFACTS") ?: "../artifacts/market-watch", "$name.png"); target.parentFile.mkdirs()
@@ -213,6 +214,10 @@ class MarketWatchUiTest {
         compose.runOnIdle { catalog.value = catalog.value.copy(instruments = listOf(pending.copy(tradeSymbolStatus = "主力无法确认：日成交量查询超时"))) }
         compose.onNodeWithText("连续 · XAUUSD · 待确认").assertIsDisplayed()
         compose.onNodeWithContentDescription("Bid 卖出 3879.96", useUnmergedTree = true).assertIsDisplayed()
+        compose.runOnIdle { catalog.value = catalog.value.copy(instruments = listOf(pending.copy(tradeSymbolStatus = "收盘价匹配，待实时核对"))) }
+        compose.onNodeWithText("连续 · XAUUSD").assertIsDisplayed()
+        compose.onNodeWithText("收盘匹配待确认", substring = true).assertDoesNotExist()
+        compose.onNodeWithContentDescription("Ask 买入 3880.08", useUnmergedTree = true).assertIsDisplayed()
         compose.runOnIdle { catalog.value = catalog.value.copy(instruments = listOf(pending.copy(tradeSymbol = "XAUUSD", tradeSymbolStatus = null))) }
         compose.onNodeWithText("连续 · XAUUSD").assertIsDisplayed()
     }
