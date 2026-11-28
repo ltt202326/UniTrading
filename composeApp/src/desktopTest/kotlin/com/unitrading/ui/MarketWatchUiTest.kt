@@ -52,21 +52,20 @@ class MarketWatchUiTest {
     private fun order(id: String, symbol: String, role: OrderRole) =
         PendingOrder(id, OrderRequest(symbol, Side.BUY, OrderKind.LIMIT, 100), 0, role = role)
 
-    private fun render(width: Int = 400, fontScale: Float = 1f, preset: ThemePreset = ThemePreset.TRADINGV, chartCloses: Map<String, Candle> = emptyMap()) {
+    private fun render(width: Int = 400, fontScale: Float = 1f, preset: ThemePreset = ThemePreset.TRADINGV) {
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.9f, fontScale)) {
             TradingTheme(ThemeSettings(preset = preset)) {
                 Box(Modifier.requiredSize(width.dp, 800.dp).testTag("market-test-host")) {
-                    MarketWatch(plugin, market.value, state.value, "XAUUSD", { chosen = it }, chartCloses = chartCloses)
+                    MarketWatch(plugin, market.value, state.value, "XAUUSD", { chosen = it })
                 }
             }
         } }
     }
 
-    @Test fun staleQuoteUsesTheAlreadyDisplayedChartCloseWithoutReplacingBidAsk() {
+    @Test fun staleQuoteShowsBidAskWithoutChartCloseOrLastTradeRow() {
         remote = true
-        val last = Candle(75082000, 777700, 777800, 777600, 777700)
-        render(chartCloses = mapOf("XAUUSD" to last))
-        compose.onNodeWithTag("market-reference-XAUUSD", useUnmergedTree = true).assertTextContains("图表收盘 7777.00")
+        render()
+        compose.onNodeWithTag("market-reference-XAUUSD", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithContentDescription("Bid 卖出 3879.96", useUnmergedTree = true).assertExists()
         compose.onNodeWithContentDescription("Ask 买入 3880.08", useUnmergedTree = true).assertExists()
     }

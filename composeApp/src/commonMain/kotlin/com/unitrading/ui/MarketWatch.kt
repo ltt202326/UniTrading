@@ -43,8 +43,6 @@ internal fun MarketWatch(
     panel: Boolean = false,
     /** Folds the desktop market panel; its button closes the title row's actions. */
     onClose: (() -> Unit)? = null,
-    /** Last bars already shown in open charts; display-only, never a live quote. */
-    chartCloses: Map<String, Candle> = emptyMap(),
     barActions: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = TradingColors
@@ -199,15 +197,9 @@ internal fun MarketWatch(
                         key(plugin, instrument.priceSymbol, account.accountId) {
                             val quote = market.quotes[instrument.priceSymbol]
                             val status = marketSessionState(instrument, quote, market.connected, statusNow, if (remote) connectedAt else statusNow)
-                            val reference = if (status != MarketSessionState.OPEN) chartCloses[instrument.symbol]?.close?.takeIf { it > 0 }?.let { it to "图表收盘" }
-                                ?: quote?.lastTrade?.let { it to "最近成交" }
-                                ?: Timeframe.presets.mapNotNull { frame ->
-                                    try { plugin.history(instrument.symbol, frame).lastOrNull() } catch (_: IllegalArgumentException) { null }
-                                }
-                                    .maxByOrNull { it.timeMs }?.close?.takeIf { it > 0 }?.let { it to "最近K线收盘" } else null
                             MarketQuoteRow(instrument, quote,
                                 activity[instrument.priceSymbol] ?: MarketActivity(), symbol == selected,
-                                connected = market.connected, sessionState = status, reference = reference, onClick = { onSymbol(symbol) })
+                                connected = market.connected, sessionState = status, onClick = { onSymbol(symbol) })
                         }
                     } else Text("$symbol · 等待合约加载", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = colors.Muted, style = type.bodySmall)
                 }
@@ -264,7 +256,7 @@ private data class ActivityMarker(val label: String, val count: Int, val color: 
 internal fun MarketQuoteRow(
     instrument: Instrument, quote: Quote?, activity: MarketActivity, selected: Boolean,
     connected: Boolean = true, sessionState: MarketSessionState = if (!connected) MarketSessionState.DISCONNECTED else if (quote != null) MarketSessionState.OPEN else MarketSessionState.WAITING,
-    reference: Pair<Long, String>? = null, onClick: () -> Unit,
+    onClick: () -> Unit,
 ) {
     val colors = TradingColors
     val markers = listOf(
@@ -303,8 +295,6 @@ internal fun MarketQuoteRow(
                         Modifier.testTag("market-session-${instrument.symbol}").semantics { contentDescription = "市场状态：${sessionState.label}" }, size = 6.dp)
                 }
                 Text(watchSubtitle(instrument), color = colors.Muted, style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                reference?.let { (price, source) -> Text("$source ${instrument.formatPrice(price)}", Modifier.testTag("market-reference-${instrument.symbol}"),
-                    color = colors.Muted, style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 Text("涨跌 $dailyChange", Modifier.testTag("market-change-${instrument.symbol}").semantics {
                     contentDescription = "当日涨跌幅 $dailyChange，按最新成交与券商结算价计算"
                 }, color = when { dailyDirection > 0 -> colors.UpText; dailyDirection < 0 -> colors.DownText; else -> colors.Muted },
