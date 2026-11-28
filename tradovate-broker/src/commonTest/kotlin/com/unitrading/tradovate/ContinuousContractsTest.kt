@@ -22,6 +22,7 @@ class ContinuousContractsTest {
         var currentDailyBar = false
         var currentOnlySymbols = emptySet<String>()
         var quoteAtClock = false
+        var closedPriceFixture = false
         var sessionRows: List<JsonObject>? = null
         var penalty: JsonObject? = null
         var chartPenalty = false
@@ -94,7 +95,7 @@ class ContinuousContractsTest {
                     val description = body["chartDescription"] as? JsonObject
                     val range = requireNotNull(body["timeRange"] as? JsonObject)
                     val dailyVolume = description?.str("underlyingType") == "DailyBar" &&
-                        description.long("elementSize") == 1L && body.str("symbol")?.startsWith("@") == false &&
+                        description.long("elementSize") == 1L && (closedPriceFixture || body.str("symbol")?.startsWith("@") == false) &&
                         range.str("asFarAsTimestamp") != null && range.str("closestTimestamp") != null
                     if (!dailyVolume) {
                         chartRequests.add(body)
@@ -130,6 +131,10 @@ class ContinuousContractsTest {
                     } else ""
                     // Deliver data before the response to exercise subscription registration races.
                     val bars = when {
+                        closedPriceFixture -> {
+                            val value = if (body.str("symbol") == "@MES" || body.str("symbol") == "MESZ6") 5500 else 5400
+                            """[{"timestamp":"$barTime","open":$value,"high":$value,"low":$value,"close":$value,"upVolume":1,"downVolume":0}]"""
+                        }
                         // The API treats a count limit as a different time-range strategy.
                         // Mixing it with bounds may return only the current, unfinished bar.
                         range.long("asMuchAsElements") != null -> """[{"timestamp":"$nextDate","upVolume":100000,"downVolume":0}]"""
@@ -217,6 +222,43 @@ class ContinuousContractsTest {
         return broker
     }
     private fun request() = OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MES")
+
+    @Test fun indexLivePriceMatchingUsesTheDatedContractAndRejectsOldMapping() = runTest {
+        val wire = Wire()
+        val broker = ready(wire)
+        assertNull(broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        wire.clock += 1000
+        val at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":13,"s":"s","bars":[{"timestamp":"$at","open":5500,"high":5501,"low":5499,"close":5500.50}]}]}}]""")
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5500.50},"Bid":{"price":5500.50},"Offer":{"price":5500.75}}},{"contractId":201,"timestamp":"$at","entries":{"Trade":{"price":5499.50}}}]}}]""")
+        runCurrent()
+        assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        val session = broker.openSession("100")
+        assertTrue(session.preview(request()).valid)
+        assertFalse(session.preview(request().copy(symbol = "MESH7")).valid)
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
+    }
+
+    @Test fun closedPriceReferenceDisplaysLastQuoteButNeverAuthorizesOrder() = runTest {
+        val wire = Wire().apply { closedPriceFixture = true; clock = timestamp("2026-12-31T23:15:00Z")!! }
+        val broker = ready(wire)
+        advanceTimeBy(8_000); runCurrent()
+        val symbol = broker.instruments.single { it.symbol == "@MES" }
+        assertEquals("MESZ6", symbol.quoteSymbol)
+        assertNull(symbol.executionSymbol, "Daily close agreement is only a display reference")
+        wire.delegate.market.quote(time = wire.clock - 60_000)
+        runCurrent()
+        val quote = assertNotNull(broker.market.value.quotes["MESZ6"])
+        assertTrue(wire.clock - quote.timeMs >= 60_000)
+        val at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Bid":{"price":5500}}}]}}]""")
+        runCurrent()
+        assertTrue(wire.clock - assertNotNull(broker.market.value.quotes["MESZ6"]).timeMs >= 60_000,
+            "A fresh bid must not make an old ask tradable")
+        val session = broker.openSession("100")
+        assertFalse(session.preview(request()).valid)
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
+    }
 
     @Test fun continuousChartAndDatedExecutionUseSeparateSymbols() = runTest {
         val wire = Wire()

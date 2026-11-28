@@ -241,6 +241,7 @@ internal fun watchSubtitle(instrument: Instrument): String {
     return "连续 · $contract" + when {
         instrument.executionSymbol != null -> ""
         instrument.tradeSymbolStatus?.startsWith("正在核实主力") == true -> " · 核实中"
+        instrument.tradeSymbolStatus?.startsWith("收盘价匹配") == true -> " · 收盘匹配待确认"
         else -> " · 待确认"
     }
 }
@@ -309,7 +310,8 @@ internal fun MarketQuoteRow(
                 }, color = when { dailyDirection > 0 -> colors.UpText; dailyDirection < 0 -> colors.DownText; else -> colors.Muted },
                     style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } }
-            val time = quote?.let { quoteTime(it.timeMs) } ?: "等待报价"
+            val isClosedReference = instrument.tradeSymbolStatus?.startsWith("收盘价匹配") == true
+            val time = quote?.let { (if (sessionState == MarketSessionState.OPEN && !isClosedReference) "" else "最后报价 ") + quoteTime(it.timeMs) } ?: "等待报价"
             val spread = "点差 ${quoteSpread(quote, instrument)} tick"
             if (stacked) {
                 symbol(Modifier.fillMaxWidth())

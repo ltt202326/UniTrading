@@ -309,7 +309,8 @@ class TradovateTests {
         assertEquals(5_500_250_000, broker.market.value.quotes.getValue("MESZ6").ask)
         wire.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"${kotlin.time.Instant.fromEpochMilliseconds(TEST_TIME + 5000)}","entries":{"Trade":{"price":5501},"SettlementPrice":{"price":5400}}}]}}]""")
         runCurrent()
-        assertEquals(updateTime, broker.market.value.quotes.getValue("MESZ6").timeMs)
+        assertEquals(TEST_TIME, broker.market.value.quotes.getValue("MESZ6").timeMs,
+            "A newer bid or trade must not make the older ask appear fresh")
         assertEquals(5_501_000_000, broker.market.value.quotes.getValue("MESZ6").lastTrade)
         assertEquals(5_400_000_000, broker.market.value.quotes.getValue("MESZ6").settlement)
     }
