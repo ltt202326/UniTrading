@@ -133,7 +133,7 @@ class NotificationUiTest {
         compose.onNodeWithTag("dismiss-trade-notice").performClick()
         compose.onNodeWithTag("trade-notice").assertDoesNotExist()
         compose.runOnIdle { broker.market.value = broker.market.value.copy(connected = false, tradingReady = false, statusMessage = "连接已断开") }
-        compose.onNodeWithTag("connection-status").assertTextContains("已断开")
+        compose.onNodeWithTag("connection-status").assert(hasContentDescription("连接状态：已断开", substring = true))
         compose.onNodeWithTag("connection-status").performClick()
         compose.onNodeWithTag("resynchronize-account").assertIsNotEnabled()
     }
