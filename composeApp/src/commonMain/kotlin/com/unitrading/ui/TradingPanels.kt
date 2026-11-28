@@ -105,11 +105,12 @@ internal fun OrderTicket(
     floating: Boolean = false,
     compactFloating: Boolean = false,
     market: MarketSnapshot? = null,
+    platformName: String? = null,
 ) {
     var advanced by remember(instrument.symbol) { mutableStateOf(false) }
     Column(modifier) {
         if (!floating) PanelHeader("新建订单", subtitle = listOfNotNull(accountName, instrument.symbol, "${instrument.currency} 结算").joinToString(" · ")) {
-            EnvironmentBadge(environment)
+            EnvironmentBadge(environment, Modifier.widthIn(max = 140.dp).testTag("order-platform"), displayName = platformName)
             if (onClose != null) ActionIcon(AppIcons.Close, closeLabel, closeTag, onClick = onClose) else Spacer(Modifier.width(12.dp))
         }
         if (onChartAdjust != null || onDiscard != null) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {

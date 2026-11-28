@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,13 +47,13 @@ internal fun BrokerEnvironment.badgeLabel() = when {
 
 /** Which money is at stake stays visible on every screen; Live takes the error colour on purpose. */
 @Composable
-internal fun EnvironmentBadge(environment: BrokerEnvironment, modifier: Modifier = Modifier) {
+internal fun EnvironmentBadge(environment: BrokerEnvironment, modifier: Modifier = Modifier, displayName: String? = null) {
     val colors = MaterialTheme.colorScheme
-    StatusBadge(environment.badgeLabel(), when {
+    StatusBadge(displayName ?: environment.badgeLabel(), when {
         environment == BrokerEnvironment.LOCAL_DEMO -> colors.primary
         environment.live -> colors.error
         else -> colors.tertiary
-    }, modifier)
+    }, if (displayName == null) modifier else modifier.semantics { contentDescription = "$displayName · ${environment.badgeLabel()}" })
 }
 
 /** Brand mark: the rising candles on a primary tile. */

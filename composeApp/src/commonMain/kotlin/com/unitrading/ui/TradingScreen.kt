@@ -1585,7 +1585,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 onChartAdjust = if (popupVisible) dismissOrder else null,
                                 orderNotice = if (popupVisible) orderNotice else ({}),
                                 onDiscard = if (popupVisible) ({ closeOrder() }) else null,
-                                accountName = accountName, compactFloating = popupVisible && phoneScreen, market = market)
+                                accountName = accountName, compactFloating = popupVisible && phoneScreen, market = market, platformName = loginName)
                         }
                     }
                 }
@@ -2106,7 +2106,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 m.background(colors.Surface), environment = environment, capacity = capacity,
                                 onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
                                 onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request,
-                                accountName = accountName, floating = floating, compactFloating = tablet, market = market)
+                                accountName = accountName, floating = floating, compactFloating = tablet, market = market, platformName = loginName)
                         }
                         @Composable fun workspaceTerminal(target: String, m: Modifier) {
                             val (targetSession, targetSnapshot) = workspaceAccount(workspaceOf(target))

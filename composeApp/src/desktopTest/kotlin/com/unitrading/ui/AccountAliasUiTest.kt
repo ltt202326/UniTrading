@@ -10,6 +10,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.*
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import java.io.File
 import javax.imageio.ImageIO
@@ -70,6 +71,17 @@ class AccountAliasUiTest {
         onNodeWithTag("quick-login-${plugin.descriptor.id}").performClick()
         onNodeWithTag("nav-3").performClick()
         onNodeWithTag("settings-account").assertTextContains("练习号 · ${account.currency}")
+    }
+
+    @Test fun orderHeaderUsesPlatformAliasAndFallsBackToOriginalName() = runDesktopComposeUiTest(width = 1400, height = 900) {
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(1400.dp, 900.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("order-platform").assertTextContains(plugin.descriptor.name)
+        runBlocking { runtime.accountAliases.setLogin(plugin.descriptor.id, "Funednext") }
+        onNodeWithTag("order-platform").assertTextContains("Funednext")
+        runBlocking { runtime.accountAliases.setLogin(plugin.descriptor.id, "") }
+        onNodeWithTag("order-platform").assertTextContains(plugin.descriptor.name)
     }
 
     @Test fun anAliasThatCannotBeSavedKeepsTheDialogOpenWithTheReason() = runDesktopComposeUiTest(width = 400, height = 800) {
