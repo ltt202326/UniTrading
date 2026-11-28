@@ -761,7 +761,7 @@ class TradovateBroker(
             val session = sessions.first()
             suspend fun daily(name: String): List<Candle> {
                 val load = ChartLoad(emptyList())
-                preloadPage(name to Timeframe.D1, load, dailyVolumeRange(session), historyOnly = true)
+                volumeSlots.withPermit { preloadPage(name to Timeframe.D1, load, dailyVolumeRange(session), historyOnly = true) }
                 require(!load.failed && load.complete) { "历史日线不完整" }
                 return load.candles
             }

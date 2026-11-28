@@ -223,6 +223,22 @@ class ContinuousContractsTest {
     }
     private fun request() = OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MES")
 
+    @Test fun indexLivePriceMatchingUsesTheDatedContractAndRejectsOldMapping() = runTest {
+        val wire = Wire()
+        val broker = ready(wire)
+        assertNull(broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        wire.clock += 1000
+        val at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":13,"s":"s","bars":[{"timestamp":"$at","open":5500,"high":5501,"low":5499,"close":5500.50}]}]}}]""")
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5500.50},"Bid":{"price":5500.50},"Offer":{"price":5500.75}}},{"contractId":201,"timestamp":"$at","entries":{"Trade":{"price":5499.50}}}]}}]""")
+        runCurrent()
+        assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        val session = broker.openSession("100")
+        assertTrue(session.preview(request()).valid)
+        assertFalse(session.preview(request().copy(symbol = "MESH7")).valid)
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
+    }
+
     @Test fun closedPriceReferenceDisplaysLastQuoteButNeverAuthorizesOrder() = runTest {
         val wire = Wire().apply { closedPriceFixture = true; clock = timestamp("2026-12-31T23:15:00Z")!! }
         val broker = ready(wire)
