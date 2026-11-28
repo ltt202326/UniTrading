@@ -60,7 +60,7 @@ class MobileLayoutTest {
     }
     private fun height(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().size.height
 
-    @Test fun marketListKeepsTheLoadedChartCloseWhenQuoteIsStale() = phoneTest {
+    @Test fun marketListShowsLastBidAskWithoutChartCloseWhenQuoteIsStale() = phoneTest {
         val broker = OfflineOrderBroker()
         broker.market.value = broker.market.value.copy(quotes = broker.market.value.quotes.mapValues { (_, quote) -> quote.copy(timeMs = 1L) })
         val offline = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
@@ -69,7 +69,9 @@ class MobileLayoutTest {
         } }
         compose.onNodeWithTag("trading-chart").assertExists()
         compose.onNodeWithTag("nav-0").performClick()
-        compose.onNodeWithTag("market-reference-TESTZ6", useUnmergedTree = true).assertTextContains("图表收盘 5485.00")
+        compose.onNodeWithTag("market-reference-TESTZ6", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithContentDescription("Bid 卖出 5500.00", useUnmergedTree = true).assertExists()
+        compose.onNodeWithContentDescription("Ask 买入 5500.25", useUnmergedTree = true).assertExists()
         assertTrue(broker.placed.isEmpty())
     }
 

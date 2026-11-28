@@ -68,7 +68,7 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 
 private enum class ChartDragMode { PRICE, TIME, PLOT, PANE, NONE }
-private data class PriceTag(val price: Long, val ink: Color, val background: Color, val priority: Int = 1, val reference: Boolean = false)
+private data class PriceTag(val price: Long, val ink: Color, val background: Color, val priority: Int = 1, val reference: Boolean = false, val side: String? = null)
 private sealed interface PriceObject {
     val rank: Long
     data class Indicator(val item: ComputedIndicator, override val rank: Long) : PriceObject
@@ -180,8 +180,8 @@ fun TradingChart(
     var phonePriceColumn by remember(instrument.symbol) { mutableStateOf(with(density) { 48.dp.toPx() }) }
     // Tablets reclaim chart width, while long symbols and prices still receive enough space.
     val priceColumn = if (chrome.tabletCompactAxis) {
-        val samples = listOfNotNull(instrument.symbol, quote?.bid?.let(instrument::formatPrice),
-            quote?.ask?.let(instrument::formatPrice), candles.maxOfOrNull { it.high }?.let(instrument::formatPrice),
+        val samples = listOfNotNull(instrument.symbol, (quote ?: chrome.statusQuote)?.bid?.let { "Bid ${instrument.formatPrice(it)}" },
+            (quote ?: chrome.statusQuote)?.ask?.let { "Ask ${instrument.formatPrice(it)}" }, candles.maxOfOrNull { it.high }?.let(instrument::formatPrice),
             candles.minOfOrNull { it.low }?.let(instrument::formatPrice), "00:00:00")
         maxOf(with(density) { 68.dp.toPx() }, samples.maxOf { textMeasurer.measure(it, TextStyle(fontSize = 11.sp, fontFeatureSettings = "tnum")).size.width.toFloat() } + with(density) { 12.dp.toPx() })
     } else if (chrome.phoneContextMenu) phonePriceColumn else with(density) { 84.dp.toPx() }
@@ -251,12 +251,15 @@ fun TradingChart(
     val countdown = candles.lastOrNull()?.let { last -> nowMs?.let { barCountdown(last.timeMs, periodMs, it) } }
     val connectedAt = remember(accountKey, instrument.symbol, connected) { if (remote) Clock.System.now().toEpochMilliseconds() else quote?.timeMs ?: 0L }
     val marketState = marketSessionState(instrument, chrome.statusQuote ?: quote, connected, nowMs ?: 0L, connectedAt)
+    // This quote is only painted; order previews, gestures and trading still use `quote`.
+    val displayQuote = quote ?: chrome.statusQuote
     val chartQuote = if (chrome.regularSession && (nowMs == null || !isRegularChartTime(nowMs))) {
         candles.lastOrNull()?.close?.let { close -> quote?.copy(bid = close, ask = close) }
     } else quote
     /** Prices the automatic axis keeps in view: the quote, the position and its protection, orders and the draft. */
     val tradingPrices = buildList {
         chartQuote?.let { add(it.bid); add(it.ask) }
+        displayQuote?.let { add(it.bid); add(it.ask) }
         if (showPositions) selectedPosition?.let { p -> add(p.entryPrice); p.stopLoss?.let(::add); p.takeProfit?.let(::add) }
         if (showOrders) orders.forEach { order ->
             order.request.entryPrice?.let(::add)
@@ -323,10 +326,9 @@ fun TradingChart(
     if (chrome.phoneContextMenu) {
         val samples = buildList {
             add(instrument.symbol)
-            if (marketState != MarketSessionState.OPEN || chartQuote == null) add("${instrument.symbol} 收")
             add(axisPrice(scale.price(top, instrument.tickSize)))
             add(axisPrice(scale.price(plotBottom, instrument.tickSize)))
-            chartQuote?.let { add(axisPrice(it.bid)); add(axisPrice(it.ask)) }
+            displayQuote?.let { add("Bid ${axisPrice(it.bid)}"); add("Ask ${axisPrice(it.ask)}") }
             if (axis.showCountdown) countdown?.let(::add)
         }
         val textStyle = TextStyle(fontSize = 11.sp, fontFeatureSettings = "tnum")
@@ -566,7 +568,9 @@ fun TradingChart(
                                 (actions.tradingKeys?.let {
                                     if (actions.stopRequiredForSizing) "图表获得焦点后按 ${it.buy} 或 ${it.sell} 打开下单栏填写止损价。"
                                     else "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。"
-                                } ?: "")
+                                } ?: "") + (displayQuote?.let {
+                                    "${if (quote == null || marketState != MarketSessionState.OPEN) "最后报价" else "实时报价"} Bid ${instrument.formatPrice(it.bid)}，Ask ${instrument.formatPrice(it.ask)}。"
+                                } ?: "暂无 Bid/Ask 报价。")
                             stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};locked:$locked;panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom;lockedTime:${chrome.lockedCrosshairTime ?: "none"};barStep:$step;barBody:${candleWidth.body};plotTop:$top;countdown:${countdown ?: "none"};history:${if (showHistory) trades.size + executions.size else 0};priceColumn:$priceColumn"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
                             set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
@@ -879,19 +883,20 @@ fun TradingChart(
                     }
                     paintPriceObjects(false)
                     drawingFrame?.let { drawDrawingControls(it, plotRect, textMeasurer, colors.Chart) }
-                    chartQuote?.takeIf { marketState == MarketSessionState.OPEN }?.let {
+                    displayQuote?.let {
+                        val isReference = quote == null || marketState != MarketSessionState.OPEN
+                        val lineColor = if (isReference) colors.Muted else colors.Accent
                         val y = scale.y(it.bid)
-                        if (axis.showPriceLine) drawLine(colors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
+                        if (axis.showPriceLine) drawLine(lineColor.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
                         if (axis.showBidAsk) drawLine(colors.Muted.copy(alpha = .35f), Offset(left, scale.y(it.ask)), Offset(right, scale.y(it.ask)), 1f,
                             pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f, 4f)))
-                        if (axis.showLastPrice) priceTags.add(PriceTag(it.bid, colors.OnBrand, colors.Brand, priority = 2))
-                    }
-                    // An unresolved continuous contract still has chart history. This is a historical close for display,
-                    // never a Bid/Ask or an input to the order, risk, or contract-matching paths.
-                    if (marketState != MarketSessionState.OPEN || chartQuote == null) candles.lastOrNull()?.close?.takeIf { it > 0 }?.let { close ->
-                        val y = scale.y(close)
-                        if (axis.showPriceLine) drawLine(colors.Muted.copy(alpha = .55f), Offset(left, y), Offset(right, y), 1f)
-                        if (axis.showLastPrice) priceTags.add(PriceTag(close, colors.Surface, colors.Muted, priority = 2, reference = true))
+                        if (axis.showLastPrice) {
+                            priceTags.add(PriceTag(it.bid, if (isReference) colors.Surface else colors.OnBrand,
+                                if (isReference) colors.Muted else colors.Brand, priority = 2, reference = isReference,
+                                side = if (isReference) "Bid" else null))
+                            if (isReference && axis.showBidAsk && it.ask != it.bid)
+                                priceTags.add(PriceTag(it.ask, colors.Surface, colors.Muted, reference = true, side = "Ask"))
+                        }
                     }
                     if (showHistory) executions.forEach { execution ->
                         val x = x(execution.timeMs)
@@ -986,14 +991,14 @@ fun TradingChart(
                     tags.zip(centers).forEachIndexed { index, (tag, center) ->
                         drawLine(colors.Muted, Offset(if (axis.left) left else right, scale.y(tag.price)), Offset(if (axis.left) tagLeft + tagWidth else tagLeft, center), 1f)
                         drawRoundRect(tag.background, Offset(tagLeft, center - lineHeight / 2), Size(tagWidth, lineHeight), CornerRadius(2.dp.toPx(), 2.dp.toPx()))
-                        text(axisPrice(tag.price), tagLeft + labelPadding, center - labelHeight / 2, tag.ink)
+                        text((tag.side?.let { "$it " } ?: "") + axisPrice(tag.price), tagLeft + labelPadding, center - labelHeight / 2, tag.ink)
                         if (tag.priority == 2) {
                             // The live price tag also names the contract above and counts the bar down below, unless a neighbour needs the room.
                             val roomAbove = centers.getOrNull(index - 1)?.let { center - it } ?: Float.MAX_VALUE
                             val roomBelow = centers.getOrNull(index + 1)?.let { it - center } ?: Float.MAX_VALUE
                             if (roomAbove >= lineHeight * 2) {
                                 drawRect(tag.background, Offset(tagLeft, center - lineHeight * 1.5f), Size(tagWidth, lineHeight))
-                                text(instrument.symbol + if (tag.reference) " 收" else "", tagLeft + labelPadding, center - lineHeight * 1.5f + labelPadding, tag.ink)
+                                text(instrument.symbol, tagLeft + labelPadding, center - lineHeight * 1.5f + labelPadding, tag.ink)
                             }
                             if (!tag.reference && axis.showCountdown && countdown != null && roomBelow >= lineHeight * 2) {
                                 drawRect(tag.background, Offset(tagLeft, center + lineHeight / 2), Size(tagWidth, lineHeight))
@@ -1137,7 +1142,10 @@ fun TradingChart(
                 if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 96.dp)
                     .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!compact && !chrome.sharedToolbar) toolbar(Modifier)
-                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact, marketState = marketState,
+                    // Display an unconfirmed contract's last quote without passing it to orders or chart actions.
+                    val legendQuote = quote ?: chrome.statusQuote
+                    ChartLegend(instrument, timeframe, bar, previous, legendQuote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact, marketState = marketState,
+                        quoteIsReference = legendQuote != null && (quote == null || marketState != MarketSessionState.OPEN),
                         keysHint = actions.tradingKeys?.let {
                             tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders, actions.stopRequiredForSizing, actions.attachedProtection)
                         }, keysLive = chartFocused, zoneId = chrome.chartTimeZone.zoneId, zoneLabel = chrome.chartTimeZoneLabel ?: chrome.chartTimeZone.label)
