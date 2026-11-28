@@ -35,7 +35,7 @@ class ChartLastQuoteUiTest {
         compose.onNodeWithTag("legend-sell").assertTextContains("83.32")
         compose.onNodeWithTag("legend-buy").assertTextContains("83.36")
         compose.onNodeWithTag("trading-chart").assert(hasContentDescription("最后报价 Bid 83.32，Ask 83.36", substring = true))
-        compose.onNodeWithTag("legend-last-quote").assertTextContains("最后报价 2023-11-15 06:13:20", substring = true)
+        compose.onNodeWithTag("legend-last-quote").assertDoesNotExist()
         compose.onNodeWithTag("legend-buy").performClick()
         assertEquals(Side.BUY, picked)
         assertNull(instrument.executionSymbol)

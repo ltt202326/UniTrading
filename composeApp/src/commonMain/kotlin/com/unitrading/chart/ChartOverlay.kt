@@ -341,7 +341,6 @@ internal fun ChartLegend(
     keysLive: Boolean = false,
     zoneId: String = "Asia/Shanghai",
     zoneLabel: String = "北京时间",
-    quoteIsReference: Boolean = false,
 ) {
     val colors = TradingColors
     val type = MaterialTheme.typography
@@ -377,8 +376,6 @@ internal fun ChartLegend(
                 Text(quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—", style = type.labelSmall, color = colors.Muted)
                 TradeButton(Side.BUY, quote?.let { instrument.formatPrice(it.ask) } ?: "—", colors.UpText, Modifier.testTag("legend-buy")) { onSide(Side.BUY) }
             }
-            if (!compact && quoteIsReference && quote != null) Text("最后报价 ${chartDateTime(quote.timeMs, seconds = true, zoneId = zoneId)} $zoneLabel",
-                Modifier.testTag("legend-last-quote"), style = type.labelSmall, color = colors.Muted)
         }
     }
 }

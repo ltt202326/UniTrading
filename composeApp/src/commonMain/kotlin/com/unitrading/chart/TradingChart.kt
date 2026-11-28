@@ -1145,7 +1145,6 @@ fun TradingChart(
                     // Display an unconfirmed contract's last quote without passing it to orders or chart actions.
                     val legendQuote = quote ?: chrome.statusQuote
                     ChartLegend(instrument, timeframe, bar, previous, legendQuote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact, marketState = marketState,
-                        quoteIsReference = legendQuote != null && (quote == null || marketState != MarketSessionState.OPEN),
                         keysHint = actions.tradingKeys?.let {
                             tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders, actions.stopRequiredForSizing, actions.attachedProtection)
                         }, keysLive = chartFocused, zoneId = chrome.chartTimeZone.zoneId, zoneLabel = chrome.chartTimeZoneLabel ?: chrome.chartTimeZone.label)
