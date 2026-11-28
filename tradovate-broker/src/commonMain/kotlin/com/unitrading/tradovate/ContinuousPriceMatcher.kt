@@ -1,6 +1,7 @@
 package com.unitrading.tradovate
 
 import kotlinx.serialization.json.JsonObject
+import com.unitrading.broker.Candle
 
 /** Select the first three unexpired broker-listed maturities, ordered by expiration. */
 internal fun nearestThreeMaturities(rows: List<JsonObject>, productId: Long, now: Long): List<JsonObject> {
@@ -40,5 +41,14 @@ internal class ContinuousPriceMatcher {
     }
 }
 
-private val indexRoots = setOf("ES", "MES", "NES", "NQ", "MNQ", "NNQ", "YM", "MYM", "NDOW", "RTY", "M2K", "NKD", "NIY", "EMD", "TWE", "VIX", "VX", "VXM")
-internal fun usesContinuousPriceMatching(symbol: String): Boolean = symbol.startsWith("@") && symbol.removePrefix("@") !in indexRoots
+/** Closed-session matching is display-only; never accepts missing, different-day or tied prices. */
+internal fun matchCompletedCloses(day: Long, continuous: List<Candle>, dated: Map<String, List<Candle>>): String? {
+    val time = dailyBarTimestamp(day)
+    fun close(bars: List<Candle>): Long? = bars.singleOrNull { it.timeMs == time }?.close?.takeIf { it > 0 }
+    val reference = close(continuous) ?: return null
+    if (dated.isEmpty() || dated.size > 3) return null
+    val prices = dated.mapValues { (_, bars) -> close(bars) ?: return null }
+    return prices.filterValues { it == reference }.keys.singleOrNull()
+}
+
+internal fun usesContinuousPriceMatching(symbol: String): Boolean = symbol.startsWith("@")

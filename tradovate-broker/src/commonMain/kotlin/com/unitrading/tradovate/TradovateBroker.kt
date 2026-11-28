@@ -108,7 +108,7 @@ class TradovateBroker(
     private val discardedCharts = mutableSetOf<String>()
     private val localEvents = mutableMapOf<String, List<ActivityEvent>>()
     private var quotes = emptyMap<String, Quote>()
-    private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long, val quoteTime: Long, val lastTrade: Long?, val settlement: Long?)
+    private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long, val bidTime: Long?, val askTime: Long?, val lastTrade: Long?, val settlement: Long?)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
     // v2: older entries stopped at the first page, about a month of intraday bars, and a cached series only ever grows at its end.
@@ -716,13 +716,20 @@ class TradovateBroker(
             } }
             catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { /* Checked against this product's names below. */ }
-            lock.withLock {
-                check(marketSocket === socket && marketReady && names.all { it in subscribedQuotes && it in realTimeQuoteSymbols }) { "候选月份实时行情订阅不完整" }
-                priceMatchReady.add(symbol)
-                updatePriceRoute(symbol)
+            val quotesReady = lock.withLock {
+                check(marketSocket === socket && marketReady) { "行情连接已变化" }
+                val ready = names.all { it in subscribedQuotes && it in realTimeQuoteSymbols }
+                if (ready) { priceMatchReady.add(symbol); updatePriceRoute(symbol) }
+                else continuousRoutes[symbol]?.let { current ->
+                    continuousRoutes = continuousRoutes + (symbol to current.copy(spec = current.spec.copy(tradeSymbolStatus = "候选月份实时行情订阅不完整")))
+                }
                 rebuild()
+                ready
             }
-            schedulePriceMonitors()
+            if (quotesReady) schedulePriceMonitors()
+            // A close-based mapping only supplies an explicitly labelled display reference;
+            // the live matcher must still validate the route before any order may be sent.
+            closedPriceReference(socket, symbol, names, contracts)
         } catch (cancel: CancellationException) { throw cancel }
         catch (e: Exception) {
             lock.withLock {
@@ -734,6 +741,45 @@ class TradovateBroker(
                 rebuild()
             }
         }
+    }
+
+    /** Read the same completed trade-date bars, only outside every candidate's known trading session. */
+    private suspend fun closedPriceReference(socket: TradovateSocket, symbol: String, names: Set<String>, contracts: List<JsonObject>) {
+        if (lock.withLock { continuousRoutes[symbol]?.spec?.tradeSymbol != null }) return
+        try {
+            val ids = contracts.map { requireNotNull(it.long("contractMaturityId")) }
+            val rows = (rest("GET", "tradingSession/ldeps?masterids=${ids.joinToString(",")}") as? JsonArray
+                ?: error("交易时段不可用")).map { it.jsonObject }
+            val checkedAt = now()
+            val sessions = ids.map { completedSession(rows, it, checkedAt) }
+            require(sessions.map { it.day }.distinct().size == 1) { "候选月份交易日不同" }
+            require(rows.none { row ->
+                val start = requireNotNull(row.str("startTime")?.let(::timestamp))
+                val end = requireNotNull(row.str("endTime")?.let(::timestamp))
+                checkedAt >= start && checkedAt < end
+            }) { "市场交易中" }
+            val session = sessions.first()
+            suspend fun daily(name: String): List<Candle> {
+                val load = ChartLoad(emptyList())
+                preloadPage(name to Timeframe.D1, load, dailyVolumeRange(session), historyOnly = true)
+                require(!load.failed && load.complete) { "历史日线不完整" }
+                return load.candles
+            }
+            val reference = daily(symbol)
+            val dated = mutableMapOf<String, List<Candle>>()
+            for (name in names.sorted()) dated[name] = daily(name)
+            val matched = matchCompletedCloses(session.day, reference, dated) ?: return
+            lock.withLock {
+                val route = continuousRoutes[symbol] ?: return@withLock
+                if (marketSocket !== socket || !marketReady || route.spec.tradeSymbol != null ||
+                    priceMatchCandidates[symbol] != names || (priceMatchExpirations[symbol]?.get(matched) ?: 0L) <= now()) return@withLock
+                continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(
+                    quoteSymbol = matched, tradeSymbolStatus = "收盘价匹配，待实时核对")))
+                rebuild()
+            }
+            syncWatchQuotes()
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { /* No completed, unique, same-day evidence: keep the route unresolved. */ }
     }
 
     /** A successful one-shot match is retained until the user presses refresh or the contract expires. */
@@ -1649,8 +1695,9 @@ class TradovateBroker(
                     }
                 }
                 // A trade or settlement update must not make old bid/ask prices appear fresh for order checks.
-                val quoteTime = if (incomingBid != null || incomingAsk != null) time else previous?.quoteTime ?: time
-                val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time, quoteTime,
+                val bidTime = if (incomingBid != null) time else previous?.bidTime
+                val askTime = if (incomingAsk != null) time else previous?.askTime
+                val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time, bidTime, askTime,
                     incomingTrade ?: previous?.lastTrade, incomingSettlement ?: previous?.settlement)
                 quoteSides[spec.symbol] = next
                 // A fresh trade on the verified execution contract is evidence of market activity, not a replacement
@@ -1659,6 +1706,7 @@ class TradovateBroker(
                 val bid = next.bid ?: continue
                 val ask = next.ask ?: continue
                 if (ask < bid) continue
+                val quoteTime = minOf(bidTime ?: continue, askTime ?: continue)
                 quotes = quotes + (spec.symbol to Quote(bid, ask, quoteTime, next.lastTrade, next.settlement))
                 priceMatchCandidates.filter { (alias, names) -> spec.symbol in names && continuousRoutes[alias]?.spec?.tradeSymbol == null }.keys.forEach(::updatePriceRoute)
             }

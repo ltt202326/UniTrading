@@ -2,6 +2,7 @@ package com.unitrading.tradovate
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import com.unitrading.broker.Candle
 import kotlin.test.*
 
 class ContinuousPriceMatcherTest {
@@ -53,8 +54,20 @@ class ContinuousPriceMatcherTest {
         assertEquals("MCLZ6", oil.unique(setOf("MCLZ6", "MCLF7"), 1000))
     }
 
-    @Test fun scopeCoversOilMetalsAndCryptoButPreservesIndexes() {
-        for (root in listOf("GC", "MGC", "SI", "SIL", "SL", "CL", "MCL", "BTC", "MBT")) assertTrue(usesContinuousPriceMatching("@$root"))
-        for (root in listOf("ES", "MES", "NQ", "MNQ", "YM", "MYM")) assertFalse(usesContinuousPriceMatching("@$root"))
+    @Test fun scopeIncludesIndicesOilMetalsAndCrypto() {
+        for (root in listOf("GC", "MGC", "SI", "SIL", "SL", "CL", "MCL", "BTC", "MBT", "ES", "MES", "NQ", "MNQ", "YM", "MYM")) assertTrue(usesContinuousPriceMatching("@$root"))
+        assertFalse(usesContinuousPriceMatching("MESZ6"))
+    }
+
+    @Test fun closedClosesNeedTheSameCompleteTradingDateAndUniquePrice() {
+        val day = 20261127L
+        val time = dailyBarTimestamp(day)
+        fun bars(value: Long, t: Long = time) = listOf(Candle(t, value, value, value, value))
+        val months = mapOf("MCLF7" to bars(8332), "MCLG7" to bars(8196), "MCLH7" to bars(8081))
+        assertEquals("MCLF7", matchCompletedCloses(day, bars(8332), months))
+        assertNull(matchCompletedCloses(day, bars(8332), months - "MCLF7" + ("MCLF7" to emptyList())))
+        assertNull(matchCompletedCloses(day, bars(8332), months + ("MCLG7" to bars(8332))))
+        assertNull(matchCompletedCloses(day, bars(8332, time - 86_400_000), months))
+        assertNull(matchCompletedCloses(day, bars(8332), months + ("MCLF7" to bars(8332, time - 86_400_000))))
     }
 }
